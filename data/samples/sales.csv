@@ -1,0 +1,7 @@
+order_id,region,product,units,revenue
+1001,North,Widget,4,120.00
+1002,South,Gadget,2,80.50
+1003,East,Widget,,45.00
+1004,West,Gizmo,7,210.75
+1005,North,Gadget,3,
+1006,South,Widget,5,150.25
