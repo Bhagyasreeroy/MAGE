@@ -81,7 +81,7 @@ services:
     volumes:
       - chroma-data:/chroma/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/8000"]
       interval: 10s
       timeout: 5s
       retries: 5
