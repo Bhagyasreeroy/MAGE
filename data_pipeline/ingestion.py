@@ -14,10 +14,11 @@ Responsibilities:
       agents always receive the same shape regardless of source type.
     • Expose hooks for Spark and Dask loaders for large-scale data.
 
-Wiring (future milestones):
-    - IngestionAgent will call DataIngestionEngine.load().
+Wiring (M1):
+    - IngestionAgent calls DataIngestionEngine.load().
+    - Currently supports local CSV / JSON / Parquet files.
     - For large files (> MAX_UPLOAD_SIZE_MB), automatically fall back to
-      Dask read_csv / Spark read.csv via the processing engine.
+      Dask read_csv / Spark read.csv via the processing engine (future).
 """
 
 from __future__ import annotations
@@ -26,17 +27,27 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 logger = logging.getLogger(__name__)
+
+# Map file extension → the pandas reader used to load it.
+_READERS: dict[str, str] = {
+    ".csv": "read_csv",
+    ".json": "read_json",
+    ".parquet": "read_parquet",
+}
 
 
 class DataIngestionEngine:
     """
     Multi-source data loader that normalises all inputs to Pandas DataFrames.
 
-    Usage (future)::
+    Usage::
 
         engine = DataIngestionEngine()
-        df, meta = engine.load("s3://my-bucket/sales.parquet")
+        result = engine.load("data/samples/sales.csv")
+        df = result["df"]
     """
 
     def load(self, source: str | Path, **kwargs: Any) -> dict[str, Any]:
@@ -46,33 +57,50 @@ class DataIngestionEngine:
         Parameters
         ----------
         source : str | Path
-            File path, URL, database connection string, or stream identifier.
+            File path to a .csv, .json, or .parquet file.
         **kwargs
-            Additional options forwarded to the underlying loader
-            (e.g. ``sep``, ``sheet_name``, ``query``).
+            Additional options forwarded to the underlying pandas reader
+            (e.g. ``sep``, ``orient``).
 
         Returns
         -------
         dict
             Keys:
-                ``df``       : loaded Pandas DataFrame (None in stub)
+                ``df``       : loaded Pandas DataFrame
                 ``source``   : echo of the original source identifier
                 ``row_count``: number of rows
                 ``columns``  : list of column names
                 ``dtypes``   : {column: dtype_string} mapping
 
-        TODO:
-            - Detect source type (file ext / URL scheme / connection string).
-            - Dispatch to pd.read_csv / pd.read_json / pd.read_parquet / …
-            - For large files: route through DataProcessingEngine (Dask/Spark).
+        Raises
+        ------
+        FileNotFoundError
+            If the source file does not exist.
+        ValueError
+            If the file extension is not supported.
         """
-        logger.info("[STUB] DataIngestionEngine.load() | source=%s", source)
+        path = Path(source)
+        logger.info("DataIngestionEngine.load() | source=%s", path)
+
+        if not path.exists():
+            raise FileNotFoundError(f"Data source not found: {path}")
+
+        suffix = path.suffix.lower()
+        reader_name = _READERS.get(suffix)
+        if reader_name is None:
+            supported = ", ".join(sorted(_READERS))
+            raise ValueError(
+                f"Unsupported file type '{suffix}'. Supported types: {supported}."
+            )
+
+        reader = getattr(pd, reader_name)
+        df: pd.DataFrame = reader(path, **kwargs)
 
         return {
-            "df": None,         # TODO: actual pd.DataFrame
-            "source": str(source),
-            "row_count": 0,
-            "columns": [],
-            "dtypes": {},
-            "message": "[STUB] DataIngestionEngine ran — no real data loaded yet.",
+            "df": df,
+            "source": str(path),
+            "row_count": int(len(df)),
+            "columns": list(df.columns),
+            "dtypes": {col: str(dtype) for col, dtype in df.dtypes.items()},
+            "message": f"Loaded {len(df)} rows from {path.name}.",
         }
