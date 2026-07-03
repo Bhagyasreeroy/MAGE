@@ -1,0 +1,101 @@
+version: "3.9"
+
+# ── MAGE Docker Compose — Development Stack ───────────────────────────────────
+# Services:
+#   backend   — FastAPI (port 8000)
+#   frontend  — Next.js (port 3000)
+#   chromadb  — ChromaDB vector store (port 8001)
+#
+# Usage:
+#   cp .env.example .env          # fill in your API keys
+#   docker-compose up --build
+
+services:
+  # ── Backend ────────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: mage-backend
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - VECTOR_STORE_BACKEND=${VECTOR_STORE_BACKEND:-chroma}
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8001
+      - FAISS_INDEX_PATH=/app/data/faiss_index
+      - CHROMA_DB_PATH=/app/data/chroma_db
+      - PROCESSING_ENGINE=${PROCESSING_ENGINE:-pandas}
+    volumes:
+      - ../data:/app/data
+    depends_on:
+      chromadb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - mage-network
+    restart: unless-stopped
+
+  # ── Frontend ───────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: mage-frontend
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:${BACKEND_PORT:-8000}
+      - NODE_ENV=development
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - mage-network
+    restart: unless-stopped
+
+  # ── ChromaDB Vector Store ──────────────────────────────────────────────────
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: mage-chromadb
+    ports:
+      - "${CHROMA_PORT:-8001}:8000"
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/data
+      - ANONYMIZED_TELEMETRY=FALSE
+    volumes:
+      - chroma-data:/chroma/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - mage-network
+    restart: unless-stopped
+
+# ── Volumes ────────────────────────────────────────────────────────────────────
+volumes:
+  chroma-data:
+    driver: local
+
+# ── Networks ───────────────────────────────────────────────────────────────────
+networks:
+  mage-network:
+    driver: bridge

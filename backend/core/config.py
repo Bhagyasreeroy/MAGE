@@ -1,0 +1,47 @@
+"""
+core/config.py
+──────────────
+Centralised application settings loaded from environment variables.
+All settings can be overridden via a .env file at the project root.
+"""
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Application-wide configuration loaded from environment."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    # ── Application ────────────────────────────────────────────────────────
+    app_name: str = "MAGE Backend"
+    environment: str = "development"
+    log_level: str = "INFO"
+
+    # ── Server ─────────────────────────────────────────────────────────────
+    backend_host: str = "0.0.0.0"
+    backend_port: int = 8000
+
+    # ── API Keys ───────────────────────────────────────────────────────────
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
+
+    # ── Vector Store ───────────────────────────────────────────────────────
+    vector_store_backend: str = "chroma"  # "chroma" | "faiss"
+    faiss_index_path: str = "./data/faiss_index"
+    chroma_db_path: str = "./data/chroma_db"
+    chroma_host: str = "chromadb"
+    chroma_port: int = 8001
+
+    # ── Data Pipeline ──────────────────────────────────────────────────────
+    max_upload_size_mb: int = 100
+    processing_engine: str = "pandas"  # "pandas" | "spark" | "dask"
+
+
+# Singleton instance — import this everywhere instead of re-instantiating.
+settings = Settings()
