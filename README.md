@@ -80,7 +80,6 @@ MAGE/
 │   └── processing.py          # DataProcessingEngine (Pandas/Dask/Spark)
 │
 ├── infra/
-│   ├── docker-compose.yml      # Full dev stack
 │   └── k8s/README.md           # Kubernetes manifests (placeholder)
 │
 ├── tests/
@@ -93,6 +92,7 @@ MAGE/
 │
 ├── .env.example                # Environment variable template
 ├── .gitignore                  # Python + Node + Docker gitignore
+├── docker-compose.yml          # Full dev stack
 └── README.md                   # This file
 ```
 
@@ -144,7 +144,7 @@ npm run dev
 
 ```bash
 # From the repo root
-docker-compose -f infra/docker-compose.yml up --build
+docker compose up --build
 
 # Services:
 #   Backend   → http://localhost:8000

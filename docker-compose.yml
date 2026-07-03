@@ -7,14 +7,14 @@ version: "3.9"
 #   chromadb  — ChromaDB vector store (port 8001)
 #
 # Usage:
-#   cp .env.example .env          # fill in your API keys
-#   docker-compose up --build
+#   cp .env.example .env
+#   docker compose up --build
 
 services:
   # ── Backend ────────────────────────────────────────────────────────────────
   backend:
     build:
-      context: ..
+      context: .
       dockerfile: backend/Dockerfile
     container_name: mage-backend
     ports:
@@ -31,7 +31,7 @@ services:
       - CHROMA_DB_PATH=/app/data/chroma_db
       - PROCESSING_ENGINE=${PROCESSING_ENGINE:-pandas}
     volumes:
-      - ../data:/app/data
+      - ./data:/app/data
     depends_on:
       chromadb:
         condition: service_healthy
@@ -48,7 +48,7 @@ services:
   # ── Frontend ───────────────────────────────────────────────────────────────
   frontend:
     build:
-      context: ../frontend
+      context: ./frontend
       dockerfile: Dockerfile
     container_name: mage-frontend
     ports:
