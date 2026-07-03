@@ -16,15 +16,15 @@ The authentication system is a stateless JWT-based (JSON Web Token) architecture
 ```mermaid
 graph TD
     subgraph Frontend [Next.js Client]
-        UI[Sign In / Register UI]
-        API[api.ts Wrapper]
-        Storage[(localStorage)]
+        UI["Sign In / Register UI"]
+        API["api.ts Wrapper"]
+        Storage[("(localStorage)")]
     end
 
     subgraph Backend [FastAPI Server]
-        AuthRouter[/auth/* Endpoints]
-        SecModule[Security Module - bcrypt/JWT]
-        DB[(SQLite - mage.db)]
+        AuthRouter["/auth/* Endpoints"]
+        SecModule["Security Module - bcrypt/JWT"]
+        DB[("SQLite - mage.db")]
     end
 
     UI -->|1. Credentials| API
