@@ -2,105 +2,127 @@
 data_pipeline/ingestion.py
 ───────────────────────────
 DataIngestionEngine — multi-source data loading and normalisation.
-
-Responsibilities:
-    • Load data from heterogeneous sources:
-        - Local files   : CSV, JSON, Parquet, Excel, Feather
-        - Remote URLs   : HTTP/S files, S3 objects
-        - Databases     : SQLite, PostgreSQL, MySQL (via SQLAlchemy)
-        - Streaming     : Kafka topics, event queues (future)
-    • Normalise all sources into a canonical Pandas DataFrame.
-    • Provide a standard DataSource protocol / dataclass so upstream
-      agents always receive the same shape regardless of source type.
-    • Expose hooks for Spark and Dask loaders for large-scale data.
-
-Wiring (M1):
-    - IngestionAgent calls DataIngestionEngine.load().
-    - Currently supports local CSV / JSON / Parquet files.
-    - For large files (> MAX_UPLOAD_SIZE_MB), automatically fall back to
-      Dask read_csv / Spark read.csv via the processing engine (future).
 """
 
 from __future__ import annotations
 
+import csv
+import io
 import logging
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from fastapi import UploadFile
 
 logger = logging.getLogger(__name__)
 
-# Map file extension → the pandas reader used to load it.
-_READERS: dict[str, str] = {
-    ".csv": "read_csv",
-    ".json": "read_json",
-    ".parquet": "read_parquet",
-}
+
+class IngestionError(Exception):
+    """Custom exception raised for all non-recoverable data ingestion errors."""
 
 
 class DataIngestionEngine:
     """
-    Multi-source data loader that normalises all inputs to Pandas DataFrames.
-
-    Usage::
-
-        engine = DataIngestionEngine()
-        result = engine.load("data/samples/sales.csv")
-        df = result["df"]
+    Multi-source data loader that normalises CSV and XLSX files to Pandas DataFrames.
     """
 
-    def load(self, source: str | Path, **kwargs: Any) -> dict[str, Any]:
+    def load(self, source: str | Path | UploadFile, **kwargs: Any) -> pd.DataFrame:
         """
-        Load data from a source and return a normalised result.
+        Load tabular data from a CSV or XLSX source and return a Pandas DataFrame.
 
         Parameters
         ----------
-        source : str | Path
-            File path to a .csv, .json, or .parquet file.
+        source : str | Path | UploadFile
+            The file source to load. Can be a file path string, a Path object,
+            or a FastAPI UploadFile.
         **kwargs
-            Additional options forwarded to the underlying pandas reader
-            (e.g. ``sep``, ``orient``).
+            Additional arguments passed to Pandas loaders.
 
         Returns
         -------
-        dict
-            Keys:
-                ``df``       : loaded Pandas DataFrame
-                ``source``   : echo of the original source identifier
-                ``row_count``: number of rows
-                ``columns``  : list of column names
-                ``dtypes``   : {column: dtype_string} mapping
+        pd.DataFrame
+            The parsed and loaded dataset as a Pandas DataFrame.
 
         Raises
         ------
-        FileNotFoundError
-            If the source file does not exist.
-        ValueError
-            If the file extension is not supported.
+        IngestionError
+            If the file is not found, empty, has an unsupported extension,
+            fails encoding checks, or fails delimiter detection.
         """
-        path = Path(source)
-        logger.info("DataIngestionEngine.load() | source=%s", path)
+        filename = ""
+        content = b""
 
-        if not path.exists():
-            raise FileNotFoundError(f"Data source not found: {path}")
+        if self._is_upload_file(source):
+            filename = source.filename or ""
+            try:
+                source.file.seek(0)
+                content = source.file.read()
+                source.file.seek(0)
+            except Exception as exc:
+                raise IngestionError(f"Failed to read uploaded file content: {exc}") from exc
+        else:
+            file_path = Path(source)
+            filename = file_path.name
+            if not file_path.exists():
+                raise IngestionError(f"File not found: {file_path}")
+            if not file_path.is_file():
+                raise IngestionError(f"Path is not a file: {file_path}")
+            try:
+                content = file_path.read_bytes()
+            except Exception as exc:
+                raise IngestionError(f"Failed to read file from path: {exc}") from exc
 
-        suffix = path.suffix.lower()
-        reader_name = _READERS.get(suffix)
-        if reader_name is None:
-            supported = ", ".join(sorted(_READERS))
-            raise ValueError(
-                f"Unsupported file type '{suffix}'. Supported types: {supported}."
+        if not content or len(content.strip()) == 0:
+            raise IngestionError("Empty file: the provided dataset has no content.")
+
+        ext = Path(filename).suffix.lower()
+        if ext not in [".csv", ".xlsx"]:
+            raise IngestionError(
+                f"Unsupported extension '{ext}': only CSV and XLSX files are supported."
             )
 
-        reader = getattr(pd, reader_name)
-        df: pd.DataFrame = reader(path, **kwargs)
+        if ext == ".csv":
+            return self._load_csv(content, **kwargs)
+        if ext == ".xlsx":
+            return self._load_xlsx(content, **kwargs)
+        raise IngestionError(f"Unsupported file type: {ext}")
 
-        return {
-            "df": df,
-            "source": str(path),
-            "row_count": int(len(df)),
-            "columns": list(df.columns),
-            "dtypes": {col: str(dtype) for col, dtype in df.dtypes.items()},
-            "message": f"Loaded {len(df)} rows from {path.name}.",
-        }
+    def _load_csv(self, content: bytes, **kwargs: Any) -> pd.DataFrame:
+        """Decode, detect delimiter, and parse CSV contents."""
+        try:
+            sample_text = content.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise IngestionError(f"Encoding error: failed to decode CSV file as UTF-8: {exc}") from exc
+
+        if not sample_text.strip():
+            raise IngestionError("Empty CSV file.")
+
+        try:
+            sample_lines = "\n".join(sample_text.splitlines()[:20])
+            sniffer = csv.Sniffer()
+            dialect = sniffer.sniff(sample_lines, delimiters=[",", ";", "\t", "|"])
+            sep = dialect.delimiter
+        except csv.Error as exc:
+            raise IngestionError(f"Delimiter detection failure for CSV: {exc}") from exc
+
+        try:
+            return pd.read_csv(io.StringIO(sample_text), sep=sep, **kwargs)
+        except pd.errors.EmptyDataError as exc:
+            raise IngestionError("Empty CSV file.") from exc
+        except Exception as exc:
+            raise IngestionError(f"Failed to parse CSV: {exc}") from exc
+
+    def _load_xlsx(self, content: bytes, **kwargs: Any) -> pd.DataFrame:
+        """Parse Excel (XLSX) contents."""
+        try:
+            return pd.read_excel(io.BytesIO(content), engine="openpyxl", **kwargs)
+        except Exception as exc:
+            raise IngestionError(f"Failed to parse XLSX: {exc}") from exc
+
+    def _is_upload_file(self, source: str | Path | UploadFile) -> bool:
+        """Return True for FastAPI/Starlette upload objects without relying on class identity."""
+        return hasattr(source, "filename") and hasattr(source, "file")
+
+    # TODO: Add image/text/multimodal ingestion once modality-specific loaders are ready.
+    # TODO: Add Spark/Dask hooks for large datasets and out-of-core processing.

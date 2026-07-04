@@ -1,118 +1,206 @@
 """
 agents/ingestion_agent.py
 ──────────────────────────
-IngestionAgent — multimodal data ingestion and validation.
-
-Responsibilities:
-    • Accept heterogeneous data sources (CSV, JSON, Parquet — more later).
-    • Validate schema, detect file type, and normalise the raw payload into
-      a canonical internal representation (a Pandas DataFrame + metadata).
-    • Report ingestion statistics: row count, column types, missing-value
-      rates, and any parse errors.
-    • Surface data quality warnings to the Orchestrator for downstream
-      agents to act on.
-
-Wiring (M1):
-    - Calls DataIngestionEngine from /data_pipeline/ingestion.py.
-    - Reads the file path from context["data"]["path"] (or "source").
-    - Emits schema, row_count, and quality_warnings.
+IngestionAgent — tabular data ingestion, validation, and profiling.
 """
 
 from __future__ import annotations
 
+import csv
+import io
 import logging
+from pathlib import Path
 from typing import Any
 
-from data_pipeline.ingestion import DataIngestionEngine
+import pandas as pd
+from fastapi import UploadFile
+
+from backend.schemas.analysis import ColumnStats, ColumnSummary, IngestionResult
+from data_pipeline.ingestion import DataIngestionEngine, IngestionError
 
 logger = logging.getLogger(__name__)
 
 
 class IngestionAgent:
     """
-    Parses, validates, and normalises heterogeneous data uploads.
+    Ingests tabular data, validates structural constraints, and profiles columns.
 
-    Input context keys consumed:
-        - ``data``            : dict; expects ``path`` (or ``source``) pointing
-                                to a local CSV / JSON / Parquet file
-        - ``goal``            : analytical goal (used to infer required schema)
-        - ``expertise_level`` : adapts verbosity of quality warnings
-
-    Output keys produced:
-        - ``schema``          : inferred column → dtype mapping
-        - ``row_count``       : number of rows ingested
-        - ``columns``         : list of column names
-        - ``quality_warnings``: list of data-quality issue strings
+    Input context keys consumed (via run):
+        - ``source`` : str, Path, or UploadFile
     """
 
     def __init__(self) -> None:
         self._engine = DataIngestionEngine()
 
-    def run(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
+    def run(
+        self,
+        source: str | Path | UploadFile | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> IngestionResult:
         """
-        Execute the ingestion and validation pipeline.
+        Execute ingestion, validation, and profiling on the provided source.
 
         Parameters
         ----------
+        source : str | Path | UploadFile, optional
+            The data source to ingest.
         context : dict, optional
-            Shared pipeline context forwarded by the Orchestrator.
-            The data payload is read from ``context["data"]``.
+            Shared pipeline context. If source is not provided directly, it is
+            extracted from context["data"].get("source") or context.get("source").
 
         Returns
         -------
-        dict
-            Ingestion result payload.
+        IngestionResult
+            Structured ingestion profile for the tabular dataset.
+
+        Raises
+        ------
+        IngestionError
+            If validation or ingestion fails critically (empty, duplicate headers, etc.).
         """
         context = context or {}
-        data = context.get("data") or {}
-        source = data.get("path") or data.get("source")
 
-        logger.info(
-            "IngestionAgent.run() | goal=%r source=%r",
-            context.get("goal"),
-            source,
-        )
+        target_source = source
+        if target_source is None:
+            target_source = context.get("source")
+            if target_source is None:
+                target_source = context.get("data", {}).get("source")
 
-        # No data provided — return an empty-but-valid result rather than raising,
-        # so the orchestrator's skeleton smoke run still succeeds.
-        if not source:
-            return {
-                "schema": {},
-                "row_count": 0,
-                "columns": [],
-                "quality_warnings": [],
-                "message": "No data source provided in context['data']; nothing ingested.",
-            }
+        if target_source is None:
+            raise IngestionError("No data source provided to IngestionAgent.")
 
-        try:
-            result = self._engine.load(source)
-        except (FileNotFoundError, ValueError) as exc:
-            logger.warning("Ingestion failed for source=%r: %s", source, exc)
-            return {
-                "schema": {},
-                "row_count": 0,
-                "columns": [],
-                "quality_warnings": [f"Ingestion error: {exc}"],
-                "message": f"Failed to ingest {source}: {exc}",
-            }
+        logger.info("IngestionAgent running on source: %s", target_source)
 
-        df = result["df"]
+        self._validate_raw_headers(target_source)
 
-        # ── Data-quality checks: flag columns with missing values ──────────────
-        quality_warnings: list[str] = []
-        missing_counts = df.isna().sum()
-        for column, n_missing in missing_counts.items():
-            if n_missing > 0:
-                pct = n_missing / len(df) * 100 if len(df) else 0.0
-                quality_warnings.append(
-                    f"Column '{column}' has {int(n_missing)} missing value(s) "
-                    f"({pct:.1f}%)."
+        df = self._engine.load(target_source)
+
+        row_count = len(df)
+        column_count = len(df.columns)
+        if row_count < 1:
+            raise IngestionError("Invalid dataset: the loaded dataset has 0 rows.")
+        if column_count < 1:
+            raise IngestionError("Invalid dataset: the loaded dataset has 0 columns.")
+
+        column_summary: list[ColumnSummary] = []
+        warnings: list[str] = []
+
+        for col in df.columns:
+            col_series = df[col]
+            dtype_str = str(col_series.dtype)
+            missing_count = int(col_series.isnull().sum())
+            missing_pct = (missing_count / row_count) * 100 if row_count > 0 else 0.0
+
+            if missing_pct >= 40.0:
+                warnings.append(
+                    f"Column '{col}' has {missing_pct:.1f}% missing values ({missing_count}/{row_count})."
                 )
 
-        return {
-            "schema": result["dtypes"],
-            "row_count": result["row_count"],
-            "columns": result["columns"],
-            "quality_warnings": quality_warnings,
-            "message": result["message"],
-        }
+            if pd.api.types.is_numeric_dtype(col_series) and not pd.api.types.is_bool_dtype(col_series):
+                min_val = col_series.min()
+                max_val = col_series.max()
+                mean_val = col_series.mean()
+                stats = ColumnStats(
+                    min=float(min_val) if pd.notnull(min_val) else None,
+                    max=float(max_val) if pd.notnull(max_val) else None,
+                    mean=float(mean_val) if pd.notnull(mean_val) else None,
+                )
+            else:
+                unique_count = int(col_series.nunique())
+                stats = ColumnStats(unique_count=unique_count)
+
+            column_summary.append(
+                ColumnSummary(
+                    name=str(col),
+                    dtype=dtype_str,
+                    missing_count=missing_count,
+                    stats=stats,
+                )
+            )
+
+        return IngestionResult(
+            row_count=row_count,
+            column_count=column_count,
+            column_summary=column_summary,
+            warnings=warnings,
+        )
+
+    def _validate_raw_headers(self, source: str | Path | UploadFile) -> None:
+        """Inspect raw headers before Pandas normalizes duplicate column names."""
+        filename = ""
+        content = b""
+
+        if self._is_upload_file(source):
+            filename = source.filename or ""
+            try:
+                source.file.seek(0)
+                content = source.file.read()
+                source.file.seek(0)
+            except Exception as exc:
+                raise IngestionError(f"Failed to read raw file header: {exc}") from exc
+        else:
+            file_path = Path(source)
+            filename = file_path.name
+            try:
+                content = file_path.read_bytes()
+            except Exception as exc:
+                raise IngestionError(f"Failed to read file for header validation: {exc}") from exc
+
+        if not content:
+            return
+
+        ext = Path(filename).suffix.lower()
+        headers = []
+
+        if ext == ".csv":
+            try:
+                text = content.decode("utf-8-sig")
+            except UnicodeDecodeError as exc:
+                raise IngestionError(f"Encoding check failed: {exc}") from exc
+
+            lines = [line for line in text.splitlines() if line.strip()]
+            if not lines:
+                return
+            first_line = lines[0]
+
+            try:
+                sniffer = csv.Sniffer()
+                dialect = sniffer.sniff(first_line, delimiters=[",", ";", "\t", "|"])
+                sep = dialect.delimiter
+            except csv.Error:
+                sep = ","
+
+            reader = csv.reader([first_line], delimiter=sep)
+            headers = next(reader, [])
+
+        elif ext == ".xlsx":
+            try:
+                import openpyxl
+
+                wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True)
+                sheet = wb.active
+                if sheet:
+                    for row in sheet.iter_rows(max_row=1, values_only=True):
+                        headers = ["" if val is None else str(val).strip() for val in row]
+                        break
+            except Exception as exc:
+                raise IngestionError(f"Failed to read Excel header: {exc}") from exc
+
+        seen = set()
+        duplicates = []
+        for h in headers:
+            if h in seen:
+                duplicates.append(h)
+            seen.add(h)
+
+        if duplicates:
+            raise IngestionError(
+                f"Duplicate column names detected in header: {sorted(set(duplicates))}"
+            )
+
+    def _is_upload_file(self, source: str | Path | UploadFile) -> bool:
+        """Return True for FastAPI/Starlette upload objects without relying on class identity."""
+        return hasattr(source, "filename") and hasattr(source, "file")
+
+    # TODO: Add image/text/multimodal ingestion once modality-specific loaders are ready.
+    # TODO: Add Spark/Dask hooks for large datasets and out-of-core processing.

@@ -35,6 +35,7 @@ RUN pip install --upgrade pip hatch && \
         pandas \
         numpy \
         pyarrow \
+        openpyxl \
         httpx
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
