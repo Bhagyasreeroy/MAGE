@@ -58,6 +58,45 @@ class StepResult(BaseModel):
     output: dict[str, Any] = Field(default_factory=dict, description="Agent output payload.")
 
 
+class ColumnStats(BaseModel):
+    """Column-level statistics produced during ingestion profiling."""
+
+    min: float | None = Field(default=None, description="Minimum numeric value.")
+    max: float | None = Field(default=None, description="Maximum numeric value.")
+    mean: float | None = Field(default=None, description="Mean numeric value.")
+    unique_count: int | None = Field(
+        default=None,
+        description="Unique-value count for categorical/object columns.",
+    )
+
+
+class ColumnSummary(BaseModel):
+    """Summary for a single ingested column."""
+
+    name: str = Field(..., description="Column name.")
+    dtype: str = Field(..., description="Pandas dtype string.")
+    missing_count: int = Field(..., description="Number of missing values in the column.")
+    stats: ColumnStats | None = Field(
+        default=None,
+        description="Optional profiling stats for the column.",
+    )
+
+
+class IngestionResult(BaseModel):
+    """Structured ingestion and profiling output for tabular datasets."""
+
+    row_count: int = Field(..., description="Number of rows in the ingested dataset.")
+    column_count: int = Field(..., description="Number of columns in the ingested dataset.")
+    column_summary: list[ColumnSummary] = Field(
+        default_factory=list,
+        description="Per-column summary data.",
+    )
+    warnings: list[str] = Field(
+        default_factory=list,
+        description="Non-fatal ingestion/profile warnings.",
+    )
+
+
 class AnalysisResponse(BaseModel):
     """Full EDA pipeline response returned to the client."""
 
