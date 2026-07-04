@@ -42,6 +42,15 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 100
     processing_engine: str = "pandas"  # "pandas" | "spark" | "dask"
 
+    # ── Authentication / JWT ───────────────────────────────────────────────
+    jwt_secret_key: str = "CHANGE-ME-IN-PRODUCTION-use-openssl-rand-hex-32"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 7
+
+    # ── Database ───────────────────────────────────────────────────────────
+    database_url: str = "sqlite+aiosqlite:///./mage.db"
+
 
 # Singleton instance — import this everywhere instead of re-instantiating.
 settings = Settings()

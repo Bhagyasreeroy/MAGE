@@ -70,3 +70,5 @@ logs/
 uploads/
 data/raw/
 data/processed/
+
+mage.db
