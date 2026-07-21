@@ -3,33 +3,42 @@ rag/embeddings.py
 ──────────────────
 Embedding utilities for the MAGE RAG pipeline.
 
-This module provides the embed_text() function which converts raw text into
-a dense vector representation suitable for storage in and retrieval from the
-vector store.
-
-Current state: STUB — returns a zero vector of dimension 1536 (OpenAI
-ada-002 default) so the rest of the pipeline can be exercised end-to-end
-without a live embedding model.
-
-Wiring (future milestones):
-    - Replace the stub with a real embedding call:
-        Option A: openai.Embedding.create() with text-embedding-ada-002
-        Option B: sentence-transformers (local, no API cost)
-        Option C: langchain Embeddings interface for swappable backends
-    - Add batch embedding support for efficiency.
-    - Cache embeddings to avoid redundant API calls.
+Uses a local sentence-transformers model (no API key required) so the RAG
+pipeline works out of the box in development. The model is loaded lazily
+and cached at module scope — the first call pays the load cost, every
+subsequent call reuses the same in-memory model.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Embedding dimensionality.  Must match the model used and the vector store index.
-EMBEDDING_DIM = 1536  # OpenAI ada-002 default; adjust for other models
+# all-MiniLM-L6-v2: 384-dim, ~80MB, strong quality/speed tradeoff for
+# short methodology passages. Swap via EMBEDDING_MODEL_NAME if a larger
+# model is preferred in production.
+EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
+EMBEDDING_DIM = 384
+
+_model = None
+_model_lock = threading.Lock()
+
+
+def _get_model():
+    """Lazily load and cache the sentence-transformers model (thread-safe)."""
+    global _model
+    if _model is None:
+        with _model_lock:
+            if _model is None:
+                from sentence_transformers import SentenceTransformer
+
+                logger.info("Loading embedding model %r...", EMBEDDING_MODEL_NAME)
+                _model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+    return _model
 
 
 def embed_text(text: str) -> np.ndarray:
@@ -45,22 +54,8 @@ def embed_text(text: str) -> np.ndarray:
     -------
     np.ndarray
         A 1-D float32 array of shape (EMBEDDING_DIM,).
-
-    TODO:
-        Replace the zero-vector stub with a real embedding model call:
-
-        .. code-block:: python
-
-            from openai import OpenAI
-            client = OpenAI()
-            response = client.embeddings.create(
-                model="text-embedding-ada-002",
-                input=text,
-            )
-            return np.array(response.data[0].embedding, dtype=np.float32)
     """
-    logger.debug("[STUB] embed_text() called — returning zero vector for: %r", text[:80])
-    return np.zeros(EMBEDDING_DIM, dtype=np.float32)
+    return embed_batch([text])[0]
 
 
 def embed_batch(texts: list[str]) -> np.ndarray:
@@ -76,8 +71,10 @@ def embed_batch(texts: list[str]) -> np.ndarray:
     -------
     np.ndarray
         Shape (len(texts), EMBEDDING_DIM), float32.
-
-    TODO: Replace stub with batched API call for efficiency.
     """
-    logger.debug("[STUB] embed_batch() called with %d texts.", len(texts))
-    return np.zeros((len(texts), EMBEDDING_DIM), dtype=np.float32)
+    if not texts:
+        return np.zeros((0, EMBEDDING_DIM), dtype=np.float32)
+
+    model = _get_model()
+    embeddings = model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
+    return embeddings.astype(np.float32)

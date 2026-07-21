@@ -1,24 +1,34 @@
 """
-routers/analysis.py
-────────────────────
-Analysis endpoints — accept a goal + expertise level (and optionally
-multimodal data), delegate to the OrchestratorService, and return a
-structured EDA result.
+Analysis endpoints - run the goal-conditioned pipeline and ingest tabular files.
 
 Endpoints:
-    POST /analysis/run   — trigger a full MAGE analysis pipeline run
+    POST /analysis/run     - trigger a full MAGE analysis pipeline run
+    POST /analysis/ingest  - upload a CSV or XLSX file and profile it
 """
 
-import logging
-from fastapi import APIRouter, HTTPException, status
+from __future__ import annotations
 
-from backend.schemas.analysis import AnalysisRequest, AnalysisResponse
+import logging
+
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+
+from agents.ingestion_agent import IngestionAgent
+from backend.schemas.analysis import (
+    AnalysisRequest,
+    AnalysisResponse,
+    ExpertiseLevel,
+    IngestionResult,
+    KnowledgeSource,
+)
 from backend.services.orchestrator_service import OrchestratorService
+from data_pipeline.ingestion import IngestionError
+from rag.knowledge_loader import KnowledgeBaseLoader
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _orchestrator_service = OrchestratorService()
+_ingestion_agent = IngestionAgent()
 
 
 @router.post(
@@ -27,23 +37,70 @@ _orchestrator_service = OrchestratorService()
     status_code=status.HTTP_200_OK,
     summary="Run a goal-conditioned EDA pipeline",
 )
-async def run_analysis(request: AnalysisRequest) -> AnalysisResponse:
+async def run_analysis(
+    goal: str = Form(...),
+    expertise_level: ExpertiseLevel = Form(ExpertiseLevel.intermediate),
+    file: UploadFile | None = File(None),
+) -> AnalysisResponse:
     """
     Trigger the full MAGE pipeline for a given analytical goal.
 
-    - Accepts a natural-language goal and a user expertise level.
+    - Accepts a natural-language goal, a user expertise level, and an
+      optional dataset file (multipart/form-data) in a single request.
     - Delegates to the OrchestratorAgent which runs the ReAct loop.
     - Returns structured EDA recommendations grounded in the RAG layer.
-
-    **Note (skeleton):** Currently returns a dummy response — business
-    logic will be wired in subsequent milestones.
     """
+    request = AnalysisRequest(goal=goal, expertise_level=expertise_level)
     try:
-        result = await _orchestrator_service.run(request)
+        result = await _orchestrator_service.run(request, file=file)
         return result
     except Exception as exc:
         logger.exception("Analysis pipeline failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Analysis failed: {exc}",
+        ) from exc
+
+
+@router.get(
+    "/knowledge-sources",
+    response_model=list[KnowledgeSource],
+    status_code=status.HTTP_200_OK,
+    summary="List documents in the RAG knowledge base",
+)
+async def list_knowledge_sources() -> list[KnowledgeSource]:
+    """Return the real EDA methodology documents the RecommendationAgent grounds on."""
+    chunks = KnowledgeBaseLoader().load_all()
+    by_source: dict[str, KnowledgeSource] = {}
+    for chunk in chunks:
+        source = chunk["source"]
+        if source not in by_source:
+            by_source[source] = KnowledgeSource(
+                source=source,
+                title=chunk["metadata"].get("title", source),
+                doc_type=chunk["metadata"].get("doc_type", ""),
+                chunk_count=0,
+            )
+        by_source[source].chunk_count += 1
+    return list(by_source.values())
+
+
+@router.post(
+    "/ingest",
+    response_model=IngestionResult,
+    status_code=status.HTTP_200_OK,
+    summary="Ingest and profile a tabular file",
+)
+async def ingest_file(file: UploadFile = File(...)) -> IngestionResult:
+    """Upload a CSV or XLSX file and return a structured ingestion profile."""
+    try:
+        return _ingestion_agent.run(source=file)
+    except IngestionError as exc:
+        logger.info("Ingestion failed: %s", exc)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Unexpected ingestion failure: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ingestion failed: {exc}",
         ) from exc
