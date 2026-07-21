@@ -14,32 +14,38 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy pyproject.toml first (leverages layer caching)
-COPY backend/pyproject.toml ./
+# Copy pyproject.toml + README first (hatchling requires the declared
+# readme to exist at build time) — leverages layer caching.
+COPY backend/pyproject.toml backend/README.md ./
 
 # Install pip + hatch, then install the project's dependencies
 RUN pip install --upgrade pip hatch && \
     pip install --no-cache-dir ".[dev]" 2>/dev/null || \
     pip install --no-cache-dir \
-    fastapi \
-    "uvicorn[standard]" \
-    pytest \
-    pytest-asyncio \
-    httpx \
-    python-multipart \
-    pydantic \
-    pydantic-settings \
-    python-dotenv \
-    langchain \
-    langchain-community \
-    langchain-openai \
-    faiss-cpu \
-    chromadb \
-    openpyxl \
-    pandas \
-    numpy \
-    pyarrow
-
+        fastapi \
+        "uvicorn[standard]" \
+        pytest \
+        pytest-asyncio \
+        python-multipart \
+        pydantic \
+        "pydantic[email]" \
+        pydantic-settings \
+        python-dotenv \
+        langchain \
+        langchain-community \
+        langchain-openai \
+        faiss-cpu \
+        chromadb \
+        sentence-transformers \
+        pandas \
+        numpy \
+        pyarrow \
+        openpyxl \
+        httpx \
+        "sqlalchemy[asyncio]" \
+        aiosqlite \
+        "passlib[bcrypt]" \
+        "python-jose[cryptography]"
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime

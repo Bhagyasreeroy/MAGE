@@ -1,6 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useRef, useState } from 'react';
+import { parseApiError } from '../../../lib/api';
 
 type ExpertiseLevel = 'beginner' | 'intermediate' | 'expert';
 
@@ -28,16 +30,13 @@ const EXPERTISE_OPTIONS: { value: ExpertiseLevel; label: string; icon: React.Rea
   { value: 'expert', label: 'Expert', icon: <MicroscopeIcon />, description: 'Dense technical recommendations' },
 ];
 
-const MOCK_DATASETS = [
-  { id: '1', name: 'customer_churn.csv', rows: 7043, cols: 21 },
-  { id: '2', name: 'sales_2025.parquet', rows: 15200, cols: 34 },
-  { id: '3', name: 'marketing_data.json', rows: 3200, cols: 12 },
-];
-
 export default function NewAnalysisPage() {
+  const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [goal, setGoal] = useState('');
   const [expertiseLevel, setExpertiseLevel] = useState<ExpertiseLevel>('intermediate');
-  const [selectedDataset, setSelectedDataset] = useState('');
+  const [file, setFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -51,23 +50,27 @@ export default function NewAnalysisPage() {
     setError(null);
 
     try {
+      const formData = new FormData();
+      formData.append('goal', goal.trim());
+      formData.append('expertise_level', expertiseLevel);
+      if (file) {
+        formData.append('file', file);
+      }
+
       const res = await fetch(`${apiUrl}/analysis/run`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          goal: goal.trim(),
-          expertise_level: expertiseLevel,
-          dataset_id: selectedDataset || undefined,
-        }),
+        body: formData,
       });
 
       if (!res.ok) {
-        const errBody = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(errBody.detail ?? `HTTP ${res.status}`);
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(parseApiError(errBody, res.status));
       }
 
       const data = await res.json();
-      window.location.href = `/dashboard/analysis/${data.id ?? '1'}`;
+      const id = crypto.randomUUID();
+      sessionStorage.setItem(`mage-analysis-${id}`, JSON.stringify(data));
+      router.push(`/dashboard/analysis/${id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
     } finally {
@@ -142,27 +145,44 @@ export default function NewAnalysisPage() {
           </div>
         </div>
 
-        {/* Dataset Selection */}
+        {/* Dataset Upload */}
         <div className="bg-warm-white/80 backdrop-blur-sm border border-dusty-rose/20 rounded-[2rem] p-8">
-          <label htmlFor="dataset-select" className="block text-xs font-bold text-navy/60 uppercase tracking-widest mb-4">
-            Select Dataset
+          <label htmlFor="dataset-file" className="block text-xs font-bold text-navy/60 uppercase tracking-widest mb-4">
+            Dataset
           </label>
-          <select
-            id="dataset-select"
-            value={selectedDataset}
-            onChange={(e) => setSelectedDataset(e.target.value)}
-            className="w-full bg-cream/50 border border-dusty-rose/20 rounded-2xl px-5 py-4 text-navy text-sm focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all appearance-none cursor-pointer"
+          <input
+            ref={fileInputRef}
+            id="dataset-file"
+            type="file"
+            accept=".csv,.tsv,.json,.parquet,.xlsx,.xls"
+            className="hidden"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full bg-cream/50 border border-dashed border-dusty-rose/40 rounded-2xl px-5 py-6 text-sm text-navy/60 hover:border-lavender hover:text-navy transition-all text-left"
           >
-            <option value="">Choose a dataset or upload inline…</option>
-            {MOCK_DATASETS.map((ds) => (
-              <option key={ds.id} value={ds.id}>
-                {ds.name} — {ds.rows.toLocaleString()} rows · {ds.cols} columns
-              </option>
-            ))}
-          </select>
-          <p className="text-xs text-navy/40 mt-3 font-light">
-            Or <button type="button" className="text-navy font-medium underline underline-offset-4 hover:text-navy-light transition-colors">upload a new file</button>
-          </p>
+            {file ? (
+              <span className="text-navy font-medium">
+                {file.name} — {(file.size / 1024).toFixed(1)} KB
+              </span>
+            ) : (
+              'Click to choose a CSV, TSV, JSON, Parquet, or Excel file…'
+            )}
+          </button>
+          {file && (
+            <button
+              type="button"
+              onClick={() => {
+                setFile(null);
+                if (fileInputRef.current) fileInputRef.current.value = '';
+              }}
+              className="text-xs text-navy/40 mt-3 underline underline-offset-4 hover:text-navy transition-colors"
+            >
+              Remove file
+            </button>
+          )}
         </div>
 
         {/* Error */}

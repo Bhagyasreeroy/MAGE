@@ -15,6 +15,10 @@ import os
 # Allow importing from the monorepo root when running via uvicorn from /backend
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from typing import Any
+
+from fastapi import UploadFile
+
 from backend.schemas.analysis import AnalysisRequest, AnalysisResponse
 from agents.orchestrator import OrchestratorAgent
 
@@ -34,18 +38,23 @@ class OrchestratorService:
     def __init__(self) -> None:
         self._agent = OrchestratorAgent()
 
-    async def run(self, request: AnalysisRequest) -> AnalysisResponse:
+    async def run(self, request: AnalysisRequest, file: UploadFile | None = None) -> AnalysisResponse:
         """Orchestrate a full MAGE pipeline run for the given request."""
         logger.info(
-            "Starting analysis | goal=%r expertise=%s",
+            "Starting analysis | goal=%r expertise=%s file=%s",
             request.goal,
             request.expertise_level,
+            file.filename if file else None,
         )
+
+        data: dict[str, Any] = dict(request.metadata)
+        if file is not None:
+            data["source"] = file
 
         raw_result = self._agent.run(
             goal=request.goal,
             expertise_level=request.expertise_level.value,
-            data=request.metadata,
+            data=data,
         )
 
         return AnalysisResponse(
