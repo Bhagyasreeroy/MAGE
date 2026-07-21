@@ -65,10 +65,24 @@ class VisualizationAgent:
             - Produce valid Vega-Lite / Recharts specs.
         """
         context = context or {}
-        logger.info("VisualizationAgent.run() | goal=%r", context.get("goal"))
+        directives = context.get("directives", {}) or {}
+        task_type = directives.get("task_type") or context.get("task_type")
+        charts = directives.get("charts", [])
+        logger.info(
+            "VisualizationAgent.run() | goal=%r task_type=%s charts=%s",
+            context.get("goal"), task_type, charts,
+        )
 
         # ── Stub output ───────────────────────────────────────────────────────
+        # Module 2 wires goal-conditioning through: the agent echoes the chart
+        # types selected for this task type. Module 4 replaces the stub with
+        # real Vega-Lite / Recharts specs.
         return {
-            "viz_specs": [],  # TODO: list of {type, title, x, y, color, …}
-            "message": "[STUB] VisualizationAgent ran successfully — no real specs yet.",
+            "task_type": task_type,
+            "planned_charts": charts,   # directives from the orchestrator
+            "viz_specs": [],            # TODO(M4): list of {type, title, x, y, color, …}
+            "message": (
+                f"[STUB] VisualizationAgent conditioned for '{task_type}' — "
+                f"would render: {', '.join(charts) or 'none'}."
+            ),
         }

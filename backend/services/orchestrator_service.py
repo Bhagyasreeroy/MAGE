@@ -60,6 +60,8 @@ class OrchestratorService:
         return AnalysisResponse(
             goal=request.goal,
             expertise_level=request.expertise_level,
+            task_type=raw_result.get("task_type"),
+            classification=raw_result.get("classification"),
             steps=raw_result.get("steps", []),
             recommendations=raw_result.get("recommendations", []),
             rag_sources=raw_result.get("rag_sources", []),

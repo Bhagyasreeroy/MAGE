@@ -68,13 +68,28 @@ class MiningAgent:
             - Apply goal-conditioned feature ranking.
         """
         context = context or {}
-        logger.info("MiningAgent.run() | goal=%r", context.get("goal"))
+        directives = context.get("directives", {}) or {}
+        task_type = directives.get("task_type") or context.get("task_type")
+        computations = directives.get("computations", [])
+        logger.info(
+            "MiningAgent.run() | goal=%r task_type=%s computations=%s",
+            context.get("goal"), task_type, computations,
+        )
 
         # ── Stub output ───────────────────────────────────────────────────────
+        # Module 2 wires goal-conditioning through: the agent echoes the
+        # directives it was told to run so the conditional pipeline is visible
+        # and testable. Module 3 replaces the stubs with real computations.
         return {
-            "statistics": {},    # TODO: {column: {mean, std, min, max, …}}
-            "correlations": {},  # TODO: serialised correlation matrix
-            "outliers": [],      # TODO: list of outlier record indices
-            "patterns": [],      # TODO: list of discovered pattern strings
-            "message": "[STUB] MiningAgent ran successfully — no real profiling yet.",
+            "task_type": task_type,
+            "planned_computations": computations,       # directives from the orchestrator
+            "target_column": directives.get("target_column"),
+            "statistics": {},    # TODO(M3): {column: {mean, std, min, max, …}}
+            "correlations": {},  # TODO(M3): serialised correlation matrix
+            "outliers": [],      # TODO(M3): list of outlier record indices
+            "patterns": [],      # TODO(M3): list of discovered pattern strings
+            "message": (
+                f"[STUB] MiningAgent conditioned for '{task_type}' — "
+                f"would run: {', '.join(computations) or 'default profile'}."
+            ),
         }
