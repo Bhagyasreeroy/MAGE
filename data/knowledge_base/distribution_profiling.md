@@ -35,8 +35,8 @@ chart or a downstream statistical test:
 ## Goal-conditioning note
 
 The same dataset should not always produce the same chart set: a goal like
-"investigate churn drivers" should prioritize box plots of numeric features
-split by the churn flag and a correlation heatmap restricted to
-churn-relevant columns, while a goal like "summarize sales trends" should
-prioritize time-series decomposition and rolling-average line charts over
-the same underlying columns.
+"investigate what drives a binary outcome column" should prioritize box
+plots of numeric features split by that outcome column and a correlation
+heatmap restricted to columns relevant to it, while a goal like "summarize
+trends over time" should prioritize time-series decomposition and
+rolling-average line charts over the same underlying columns.
