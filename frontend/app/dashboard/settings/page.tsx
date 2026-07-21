@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useAuth } from '../../lib/auth-context';
 
 const CheckIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -9,8 +10,10 @@ const CheckIcon = () => (
 );
 
 export default function SettingsPage() {
-  const [name, setName] = useState('Neha');
-  const [email, setEmail] = useState('neha@example.com');
+  const { user, logout } = useAuth();
+  // Dashboard layout only renders this page once `user` is loaded, so this is safe.
+  const [name, setName] = useState(user!.full_name);
+  const [email, setEmail] = useState(user!.email);
   const [openaiKey, setOpenaiKey] = useState('');
   const [defaultExpertise, setDefaultExpertise] = useState('intermediate');
   const [saved, setSaved] = useState(false);
