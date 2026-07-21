@@ -114,7 +114,8 @@ class OrchestratorAgent:
                 status = "error"
 
             # 3. OBSERVE — record the result and update context
-            step_result = {"agent": agent_name, "status": status, "output": output}
+            output_dict = output.model_dump() if hasattr(output, "model_dump") else output
+            step_result = {"agent": agent_name, "status": status, "output": output_dict}
             steps.append(step_result)
             context[f"{agent_name}_output"] = output
 

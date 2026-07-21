@@ -10,10 +10,15 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 
 from agents.ingestion_agent import IngestionAgent
-from backend.schemas.analysis import AnalysisRequest, AnalysisResponse, IngestionResult
+from backend.schemas.analysis import (
+    AnalysisRequest,
+    AnalysisResponse,
+    ExpertiseLevel,
+    IngestionResult,
+)
 from backend.services.orchestrator_service import OrchestratorService
 from data_pipeline.ingestion import IngestionError
 
@@ -30,19 +35,22 @@ _ingestion_agent = IngestionAgent()
     status_code=status.HTTP_200_OK,
     summary="Run a goal-conditioned EDA pipeline",
 )
-async def run_analysis(request: AnalysisRequest) -> AnalysisResponse:
+async def run_analysis(
+    goal: str = Form(...),
+    expertise_level: ExpertiseLevel = Form(ExpertiseLevel.intermediate),
+    file: UploadFile | None = File(None),
+) -> AnalysisResponse:
     """
     Trigger the full MAGE pipeline for a given analytical goal.
 
-    - Accepts a natural-language goal and a user expertise level.
+    - Accepts a natural-language goal, a user expertise level, and an
+      optional dataset file (multipart/form-data) in a single request.
     - Delegates to the OrchestratorAgent which runs the ReAct loop.
     - Returns structured EDA recommendations grounded in the RAG layer.
-
-    Note: this route remains on the orchestrator flow; ingestion is exposed
-    separately through POST /analysis/ingest.
     """
+    request = AnalysisRequest(goal=goal, expertise_level=expertise_level)
     try:
-        result = await _orchestrator_service.run(request)
+        result = await _orchestrator_service.run(request, file=file)
         return result
     except Exception as exc:
         logger.exception("Analysis pipeline failed: %s", exc)

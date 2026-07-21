@@ -1,7 +1,35 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useParams } from 'next/navigation';
+import { useEffect, useState } from 'react';
+
+interface StepResult {
+  agent: string;
+  status: string;
+  output: Record<string, unknown>;
+}
+
+interface AnalysisResult {
+  goal: string;
+  expertise_level: string;
+  steps: StepResult[];
+  recommendations: string[];
+  rag_sources: string[];
+  summary: string;
+}
+
+function stepSummary(step: StepResult): string {
+  const output = step.output ?? {};
+  if (step.status === 'error') {
+    return String(output.error ?? 'This step failed.');
+  }
+  if (typeof output.message === 'string') return output.message;
+  if (typeof output.row_count === 'number') {
+    return `Loaded ${output.row_count} rows × ${output.column_count ?? '?'} columns.`;
+  }
+  return 'Completed.';
+}
 
 const CheckIcon = () => (
   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -33,30 +61,6 @@ const SendIcon = () => (
   </svg>
 );
 
-const MOCK_RESULT = {
-  goal: 'Identify the top factors driving customer churn in Q4 2025',
-  expertise_level: 'intermediate',
-  summary:
-    'The analysis identified three primary drivers of customer churn: contract type (month-to-month contracts churn at 42%), lack of tech support enrollment, and high monthly charges (>$70). Customers with fiber optic internet service showed 2.3x higher churn rates compared to DSL users.',
-  steps: [
-    { agent: 'IngestionAgent', status: 'success', output: 'Loaded customer_churn.csv — 7,043 rows × 21 columns' },
-    { agent: 'MiningAgent', status: 'success', output: 'Computed statistical profiles, correlation matrix, and churn segmentation' },
-    { agent: 'VisualizationAgent', status: 'success', output: 'Generated 3 Vega-Lite chart specifications' },
-    { agent: 'RecommendationAgent', status: 'success', output: 'Produced 4 RAG-grounded recommendations' },
-  ],
-  recommendations: [
-    'Focus retention efforts on month-to-month contract customers by offering incentive-based annual plans.',
-    'Investigate fiber optic service quality — churn rate is 2.3x higher than DSL, suggesting potential service issues.',
-    'Implement an early-warning scoring model using MonthlyCharges, TechSupport, and Contract features.',
-    'Consider bundling TechSupport with high-tier plans to reduce churn risk.',
-  ],
-  rag_sources: [
-    'churn_analysis_handbook.pdf',
-    'retention_best_practices.md',
-    'telecom_industry_report_2025.pdf',
-  ],
-};
-
 // Initial mockup chat history
 const INITIAL_CHAT = [
   {
@@ -72,9 +76,39 @@ const INITIAL_CHAT = [
 ];
 
 export default function AnalysisResultPage() {
-  const result = MOCK_RESULT;
+  const params = useParams<{ id: string }>();
+  const [result, setResult] = useState<AnalysisResult | null | undefined>(undefined);
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState(INITIAL_CHAT);
+
+  useEffect(() => {
+    const stored = sessionStorage.getItem(`mage-analysis-${params.id}`);
+    setResult(stored ? JSON.parse(stored) : null);
+  }, [params.id]);
+
+  if (result === undefined) {
+    return null;
+  }
+
+  if (result === null) {
+    return (
+      <div className="max-w-2xl mx-auto text-center py-24">
+        <h1 className="font-[family-name:var(--font-serif)] text-3xl font-bold text-navy mb-4">
+          No analysis found
+        </h1>
+        <p className="text-navy/50 font-light mb-8">
+          This result isn&apos;t in your current browser session — it may have expired,
+          or this link was opened in a different tab. Start a new analysis to continue.
+        </p>
+        <Link
+          href="/dashboard/analysis/new"
+          className="inline-block bg-navy text-cream font-semibold px-8 py-4 rounded-2xl hover:bg-navy-light transition-all"
+        >
+          Start New Analysis
+        </Link>
+      </div>
+    );
+  }
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -109,9 +143,15 @@ export default function AnalysisResultPage() {
             <h1 className="font-[family-name:var(--font-serif)] text-4xl font-bold text-navy">
               Workspace
             </h1>
-            <span className="bg-sage-light/40 text-sage border border-sage/30 text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5 uppercase tracking-wider">
-              <CheckIcon /> Initial Analysis Complete
-            </span>
+            {result.steps.some((s) => s.status === 'error') ? (
+              <span className="bg-dusty-rose/10 text-dusty-rose border border-dusty-rose/30 text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5 uppercase tracking-wider">
+                Completed With Errors
+              </span>
+            ) : (
+              <span className="bg-sage-light/40 text-sage border border-sage/30 text-xs font-bold px-3 py-1.5 rounded-full flex items-center gap-1.5 uppercase tracking-wider">
+                <CheckIcon /> Initial Analysis Complete
+              </span>
+            )}
           </div>
           <p className="text-navy/60 font-light text-lg">Goal: {result.goal}</p>
         </div>
@@ -143,9 +183,13 @@ export default function AnalysisResultPage() {
               <div key={idx} className="bg-cream/50 border border-dusty-rose/15 rounded-2xl p-4">
                 <div className="flex items-center justify-between mb-2">
                   <p className="font-bold text-sm text-navy">{step.agent}</p>
-                  <CheckIcon />
+                  {step.status === 'error' ? (
+                    <span className="text-dusty-rose text-xs font-bold uppercase tracking-wide">Failed</span>
+                  ) : (
+                    <CheckIcon />
+                  )}
                 </div>
-                <p className="text-xs text-navy/50 leading-relaxed font-light">{step.output}</p>
+                <p className="text-xs text-navy/50 leading-relaxed font-light">{stepSummary(step)}</p>
               </div>
             ))}
           </div>
@@ -154,14 +198,20 @@ export default function AnalysisResultPage() {
         {/* Recommendations */}
         <div className="mb-8">
           <h3 className="text-xs font-bold text-navy/40 uppercase tracking-widest mb-3">Recommendations</h3>
-          <ul className="space-y-3">
-            {result.recommendations.map((rec, idx) => (
-              <li key={idx} className="flex gap-3 text-navy/70 font-light">
-                <span className="text-navy-muted bg-cream-dark w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">{idx + 1}</span>
-                {rec}
-              </li>
-            ))}
-          </ul>
+          {result.recommendations.length > 0 ? (
+            <ul className="space-y-3">
+              {result.recommendations.map((rec, idx) => (
+                <li key={idx} className="flex gap-3 text-navy/70 font-light">
+                  <span className="text-navy-muted bg-cream-dark w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">{idx + 1}</span>
+                  {rec}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-navy/40 font-light text-sm">
+              No recommendations were grounded for this goal — try a more specific goal, or check that your dataset uploaded correctly above.
+            </p>
+          )}
         </div>
 
         {/* Sources */}
