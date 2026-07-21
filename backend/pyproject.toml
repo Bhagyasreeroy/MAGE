@@ -42,6 +42,8 @@ dependencies = [
     "passlib[bcrypt]>=1.7.4",
     "python-jose[cryptography]>=3.3.0",
     "pydantic[email]>=2.7.0",
+    "authlib>=1.3.0",
+    "itsdangerous>=2.2.0",
 
     # ── Database (async SQLite for dev, swap to asyncpg for prod) ──────
     "sqlalchemy[asyncio]>=2.0.30",

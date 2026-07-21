@@ -8,7 +8,32 @@ import {
   type ReactNode,
 } from 'react';
 import { useRouter } from 'next/navigation';
-import { fetchCurrentUser, getAccessToken, logout as clearSession, type UserProfile } from './api';
+import {
+  fetchCurrentUser,
+  getAccessToken,
+  logout as clearSession,
+  storeAccessTokenOnly,
+  type UserProfile,
+} from './api';
+
+/**
+ * The Google OAuth callback (backend/routers/oauth.py) redirects to
+ * `/dashboard?token=<jwt>` rather than going through loginUser(), since it
+ * issues the token itself instead of the frontend submitting credentials.
+ * Pick that token up here so an OAuth sign-in actually results in a stored
+ * session, then strip it from the URL so it doesn't linger in history.
+ */
+function consumeOAuthTokenFromUrl(): void {
+  if (typeof window === 'undefined') return;
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token');
+  if (!token) return;
+
+  storeAccessTokenOnly(token);
+  params.delete('token');
+  const query = params.toString();
+  window.history.replaceState({}, '', window.location.pathname + (query ? `?${query}` : ''));
+}
 
 interface AuthContextValue {
   user: UserProfile | null;
@@ -30,6 +55,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+
+    consumeOAuthTokenFromUrl();
 
     if (!getAccessToken()) {
       router.replace('/signin');

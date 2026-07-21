@@ -46,6 +46,16 @@ export function storeTokens(access: string, refresh: string): void {
   localStorage.setItem("mage_refresh_token", refresh);
 }
 
+/**
+ * Store an access token without a refresh token — used for the OAuth
+ * redirect flow, where the backend only issues a MAGE access token
+ * (see backend/routers/oauth.py). A session started this way won't
+ * auto-refresh on 401 and will require a full re-login once it expires.
+ */
+export function storeAccessTokenOnly(access: string): void {
+  localStorage.setItem("mage_access_token", access);
+}
+
 export function clearTokens(): void {
   localStorage.removeItem("mage_access_token");
   localStorage.removeItem("mage_refresh_token");

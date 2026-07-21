@@ -35,8 +35,13 @@ class User(Base):
         String(200),
         nullable=False,
     )
-    hashed_password: Mapped[str] = mapped_column(
+    hashed_password: Mapped[str | None] = mapped_column(
         String(128),
+        nullable=True,
+    )
+    auth_provider: Mapped[str] = mapped_column(
+        String(50),
+        default="local",
         nullable=False,
     )
     is_active: Mapped[bool] = mapped_column(
