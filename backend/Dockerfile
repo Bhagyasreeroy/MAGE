@@ -21,21 +21,25 @@ COPY backend/pyproject.toml ./
 RUN pip install --upgrade pip hatch && \
     pip install --no-cache-dir ".[dev]" 2>/dev/null || \
     pip install --no-cache-dir \
-        fastapi \
-        "uvicorn[standard]" \
-        python-multipart \
-        pydantic \
-        pydantic-settings \
-        python-dotenv \
-        langchain \
-        langchain-community \
-        langchain-openai \
-        faiss-cpu \
-        chromadb \
-        pandas \
-        numpy \
-        pyarrow \
-        httpx
+    fastapi \
+    "uvicorn[standard]" \
+    pytest \
+    pytest-asyncio \
+    httpx \
+    python-multipart \
+    pydantic \
+    pydantic-settings \
+    python-dotenv \
+    langchain \
+    langchain-community \
+    langchain-openai \
+    faiss-cpu \
+    chromadb \
+    openpyxl \
+    pandas \
+    numpy \
+    pyarrow
+
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime
