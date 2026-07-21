@@ -1,9 +1,29 @@
 @import "tailwindcss";
 
-:root {
-  --font-inter: 'Inter', sans-serif;
+/* ── MAGE Design Tokens ──────────────────────────────────────────── */
+@theme {
+  --color-cream: #FAF7F4;
+  --color-cream-dark: #F0EBE5;
+  --color-warm-white: #FFFDF9;
+  --color-navy: #1A1742;
+  --color-navy-light: #272358;
+  --color-navy-muted: #4A4673;
+  --color-dusty-rose: #BFA0A8;
+  --color-dusty-rose-light: #D4B8BF;
+  --color-lavender: #C9B8D9;
+  --color-lavender-light: #E5DBF0;
+  --color-blush: #EDDFE3;
+  --color-peach: #D4956C;
+  --color-peach-light: #E8B898;
+  --color-sage: #7A9E72;
+  --color-sage-light: #C1D6BB;
+  --color-mist: #B8C4D8;
+
+  --font-serif: 'Playfair Display', Georgia, serif;
+  --font-sans: 'Inter', system-ui, sans-serif;
 }
 
+/* ── Base Styles ─────────────────────────────────────────────────── */
 @layer base {
   * {
     box-sizing: border-box;
@@ -14,38 +34,86 @@
   }
 
   body {
-    font-family: var(--font-inter), system-ui, sans-serif;
+    font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    background-color: var(--color-cream);
+    color: var(--color-navy);
   }
 }
 
+/* ── Animations ──────────────────────────────────────────────────── */
 @layer utilities {
-  /* Fade-in animation for result cards */
   @keyframes fade-in {
-    from {
-      opacity: 0;
-      transform: translateY(12px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes fade-in-left {
+    from { opacity: 0; transform: translateX(-20px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
+
+  @keyframes gradient-shift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+
+  @keyframes pulse-soft {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 0.6; }
+  }
+
+  @keyframes slide-up {
+    from { opacity: 0; transform: translateY(24px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes drift {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    33% { transform: translate(15px, -10px) scale(1.02); }
+    66% { transform: translate(-10px, 8px) scale(0.98); }
   }
 
   .animate-fade-in {
-    animation: fade-in 0.4s ease-out both;
+    animation: fade-in 0.5s ease-out both;
   }
 
-  /* Subtle shimmer for loading skeleton (future use) */
-  @keyframes shimmer {
-    0% { background-position: -200% 0; }
-    100% { background-position: 200% 0; }
+  .animate-fade-in-left {
+    animation: fade-in-left 0.5s ease-out both;
   }
 
-  .animate-shimmer {
-    background: linear-gradient(90deg, transparent 25%, rgba(255,255,255,0.05) 50%, transparent 75%);
-    background-size: 200% 100%;
-    animation: shimmer 1.5s infinite;
+  .animate-float {
+    animation: float 5s ease-in-out infinite;
   }
+
+  .animate-gradient {
+    background-size: 200% 200%;
+    animation: gradient-shift 8s ease infinite;
+  }
+
+  .animate-pulse-soft {
+    animation: pulse-soft 4s ease-in-out infinite;
+  }
+
+  .animate-slide-up {
+    animation: slide-up 0.6s ease-out both;
+  }
+
+  .animate-drift {
+    animation: drift 12s ease-in-out infinite;
+  }
+
+  .delay-100 { animation-delay: 0.1s; }
+  .delay-200 { animation-delay: 0.2s; }
+  .delay-300 { animation-delay: 0.3s; }
+  .delay-400 { animation-delay: 0.4s; }
+  .delay-500 { animation-delay: 0.5s; }
+  .delay-600 { animation-delay: 0.6s; }
 }
