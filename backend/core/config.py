@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
+    session_secret_key: str = "CHANGE-ME-SESSION-SECRET"
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    frontend_url: str = "http://localhost:3000"
 
     # ── Database ───────────────────────────────────────────────────────────
     database_url: str = "sqlite+aiosqlite:///./mage.db"
