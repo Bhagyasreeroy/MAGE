@@ -1,332 +1,226 @@
 'use client';
 
-import { useState } from 'react';
+import Link from 'next/link';
 
-type ExpertiseLevel = 'beginner' | 'intermediate' | 'expert';
-
-interface AnalysisResult {
-  goal: string;
-  expertise_level: ExpertiseLevel;
-  steps: Array<{ agent: string; status: string; output: Record<string, unknown> }>;
-  recommendations: string[];
-  rag_sources: string[];
-  summary: string;
-}
-
-const EXPERTISE_OPTIONS: { value: ExpertiseLevel; label: string; description: string }[] = [
-  { value: 'beginner', label: 'Beginner', description: 'Plain language, step-by-step explanations' },
-  { value: 'intermediate', label: 'Intermediate', description: 'Concise insights with statistics' },
-  { value: 'expert', label: 'Expert', description: 'Dense technical recommendations' },
+const FEATURES = [
+  {
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+      </svg>
+    ),
+    title: 'Upload Your Data',
+    description: 'Drag & drop CSV, JSON, or Parquet files. MAGE handles the rest.',
+  },
+  {
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+      </svg>
+    ),
+    title: 'Define Your Goal',
+    description: 'Tell MAGE what you want to discover. It adapts the entire pipeline.',
+  },
+  {
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+      </svg>
+    ),
+    title: 'Agents Analyze',
+    description: '4 specialist agents work in concert — ingestion, mining, visualization, recommendations.',
+  },
+  {
+    icon: (
+      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+      </svg>
+    ),
+    title: 'Get Insights',
+    description: 'RAG-grounded recommendations tailored to your expertise level.',
+  },
 ];
 
-const AGENT_ICONS: Record<string, string> = {
-  IngestionAgent: '📥',
-  MiningAgent: '⛏️',
-  VisualizationAgent: '📊',
-  RecommendationAgent: '💡',
-};
+const STATS = [
+  { value: '4', label: 'Specialist Agents' },
+  { value: '3', label: 'Expertise Levels' },
+  { value: '∞', label: 'Data Formats' },
+  { value: 'RAG', label: 'Grounded' },
+];
 
-export default function HomePage() {
-  const [goal, setGoal] = useState('');
-  const [expertiseLevel, setExpertiseLevel] = useState<ExpertiseLevel>('intermediate');
-  const [isLoading, setIsLoading] = useState(false);
-  const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+const TECH_PILLS = [
+  'FastAPI', 'Next.js', 'ReAct Agents', 'ChromaDB', 'LangChain', 'Pandas', 'Docker',
+];
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+const LogoIcon = () => (
+  <svg className="w-6 h-6 text-navy" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5" />
+  </svg>
+);
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!goal.trim()) return;
-
-    setIsLoading(true);
-    setError(null);
-    setResult(null);
-
-    try {
-      const res = await fetch(`${apiUrl}/analysis/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ goal: goal.trim(), expertise_level: expertiseLevel }),
-      });
-
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(errBody.detail ?? `HTTP ${res.status}`);
-      }
-
-      const data: AnalysisResult = await res.json();
-      setResult(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error occurred');
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
+export default function LandingPage() {
   return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-950 text-white">
-      {/* ── Animated Background ─────────────────────────────────────────────── */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-96 h-96 bg-indigo-500/20 rounded-full blur-3xl animate-pulse" />
-        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-violet-500/20 rounded-full blur-3xl animate-pulse delay-1000" />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-blue-600/10 rounded-full blur-3xl" />
+    <div className="min-h-screen bg-cream overflow-hidden">
+      {/* ── Decorative Background ─────────────────────────────────────── */}
+      <div className="fixed inset-0 pointer-events-none">
+        <div className="absolute -top-[20%] -right-[10%] w-[70vw] h-[70vw] max-w-[800px] max-h-[800px] bg-lavender/30 rounded-full blur-[140px] animate-drift" />
+        <div className="absolute -bottom-[20%] -left-[10%] w-[60vw] h-[60vw] max-w-[700px] max-h-[700px] bg-dusty-rose/20 rounded-full blur-[120px] animate-drift delay-500" />
+        <div className="absolute top-[30%] left-[20%] w-[50vw] h-[50vw] max-w-[600px] max-h-[600px] bg-mist/20 rounded-full blur-[160px] animate-drift delay-1000" />
       </div>
 
-      <div className="relative z-10 max-w-5xl mx-auto px-6 py-16">
-        {/* ── Hero ──────────────────────────────────────────────────────────── */}
-        <header className="text-center mb-16">
-          {/* Badge */}
-          <div className="inline-flex items-center gap-2 bg-indigo-500/10 border border-indigo-500/30 rounded-full px-4 py-1.5 text-sm text-indigo-300 mb-6 backdrop-blur-sm">
-            <span className="w-2 h-2 bg-indigo-400 rounded-full animate-ping" />
-            Multi-Agent AI · EDA · RAG-Grounded
-          </div>
-
-          <h1 className="text-7xl font-black tracking-tight mb-4">
-            <span className="bg-gradient-to-r from-indigo-400 via-violet-400 to-purple-400 bg-clip-text text-transparent">
-              MAGE
-            </span>
-          </h1>
-          <p className="text-xl text-slate-300 font-medium mb-2">
-            Multi-Agent Goal-conditioned EDA
-          </p>
-          <p className="text-slate-400 max-w-2xl mx-auto leading-relaxed">
-            Describe your analytical goal. MAGE&apos;s specialist agents will ingest your data,
-            mine patterns, select visualisations, and deliver{' '}
-            <span className="text-indigo-300 font-medium">RAG-grounded recommendations</span>{' '}
-            tailored to your expertise.
-          </p>
-        </header>
-
-        {/* ── Analysis Form ─────────────────────────────────────────────────── */}
-        <section className="mb-12">
-          <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-8 shadow-2xl">
-            <form onSubmit={handleSubmit} className="space-y-6">
-              {/* Goal Input */}
-              <div>
-                <label
-                  htmlFor="goal-input"
-                  className="block text-sm font-semibold text-slate-300 mb-3"
-                >
-                  Analytical Goal
-                </label>
-                <div className="relative">
-                  <textarea
-                    id="goal-input"
-                    rows={4}
-                    value={goal}
-                    onChange={(e) => setGoal(e.target.value)}
-                    placeholder="e.g. Identify the top factors driving customer churn in the last 6 months…"
-                    className="w-full bg-slate-900/60 border border-white/10 rounded-2xl px-5 py-4 text-white placeholder:text-slate-500 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all duration-200 text-sm leading-relaxed"
-                    minLength={5}
-                    maxLength={2000}
-                    required
-                  />
-                  <span className="absolute bottom-3 right-4 text-xs text-slate-500">
-                    {goal.length}/2000
-                  </span>
-                </div>
-              </div>
-
-              {/* Expertise Level */}
-              <div>
-                <label
-                  htmlFor="expertise-select"
-                  className="block text-sm font-semibold text-slate-300 mb-3"
-                >
-                  Expertise Level
-                </label>
-                <div className="grid grid-cols-3 gap-3" role="radiogroup" aria-label="Expertise level">
-                  {EXPERTISE_OPTIONS.map(({ value, label, description }) => (
-                    <button
-                      key={value}
-                      type="button"
-                      id={`expertise-${value}`}
-                      role="radio"
-                      aria-checked={expertiseLevel === value}
-                      onClick={() => setExpertiseLevel(value)}
-                      className={`relative p-4 rounded-xl border text-left transition-all duration-200 cursor-pointer ${
-                        expertiseLevel === value
-                          ? 'bg-indigo-500/20 border-indigo-500/60 shadow-lg shadow-indigo-500/10'
-                          : 'bg-slate-900/40 border-white/10 hover:border-white/20 hover:bg-slate-800/40'
-                      }`}
-                    >
-                      {expertiseLevel === value && (
-                        <span className="absolute top-2 right-2 w-2 h-2 bg-indigo-400 rounded-full" />
-                      )}
-                      <p className="font-semibold text-sm text-white mb-1">{label}</p>
-                      <p className="text-xs text-slate-400 leading-snug">{description}</p>
-                    </button>
-                  ))}
-                </div>
-                {/* Hidden select for accessibility / form semantics */}
-                <select
-                  id="expertise-select"
-                  value={expertiseLevel}
-                  onChange={(e) => setExpertiseLevel(e.target.value as ExpertiseLevel)}
-                  className="sr-only"
-                  aria-hidden="true"
-                >
-                  {EXPERTISE_OPTIONS.map(({ value, label }) => (
-                    <option key={value} value={value}>{label}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Submit */}
-              <button
-                id="run-analysis-btn"
-                type="submit"
-                disabled={isLoading || goal.trim().length < 5}
-                className="w-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:from-slate-700 disabled:to-slate-700 disabled:cursor-not-allowed text-white font-bold py-4 px-8 rounded-2xl transition-all duration-200 shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 hover:-translate-y-0.5 active:translate-y-0 flex items-center justify-center gap-3"
-              >
-                {isLoading ? (
-                  <>
-                    <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    Running agents…
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    Run Analysis
-                  </>
-                )}
-              </button>
-            </form>
-          </div>
-        </section>
-
-        {/* ── Error State ──────────────────────────────────────────────────── */}
-        {error && (
-          <div
-            role="alert"
-            className="bg-red-500/10 border border-red-500/30 rounded-2xl p-5 mb-8 text-red-300 text-sm flex items-start gap-3"
+      {/* ── Nav ────────────────────────────────────────────────────────── */}
+      <nav className="relative z-20 flex items-center justify-between max-w-7xl mx-auto px-8 py-8">
+        <Link href="/" className="flex items-center gap-3">
+          <LogoIcon />
+          <span className="font-[family-name:var(--font-serif)] text-2xl font-bold text-navy tracking-tight">
+            MAGE
+          </span>
+        </Link>
+        <div className="flex items-center gap-6">
+          <Link
+            href="/signin"
+            className="text-sm font-medium text-navy/70 hover:text-navy transition-colors"
           >
-            <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            Sign In
+          </Link>
+          <Link
+            href="/signup"
+            className="text-sm font-medium bg-navy text-cream px-6 py-2.5 rounded-full hover:bg-navy-light transition-all hover:-translate-y-0.5 shadow-lg shadow-navy/10"
+          >
+            Get Started
+          </Link>
+        </div>
+      </nav>
+
+      {/* ── Hero ───────────────────────────────────────────────────────── */}
+      <section className="relative z-10 max-w-5xl mx-auto px-8 pt-16 pb-24 text-center">
+        {/* Badge */}
+        <div className="inline-flex items-center gap-2 bg-warm-white/60 border border-dusty-rose/20 rounded-full px-5 py-2 text-xs uppercase tracking-widest text-navy-muted font-medium mb-10 animate-fade-in backdrop-blur-md">
+          <span className="w-1.5 h-1.5 bg-peach rounded-full" />
+          Multi-Agent AI · Exploratory Data Analysis
+        </div>
+
+        {/* Heading */}
+        <h1 className="font-[family-name:var(--font-serif)] text-6xl md:text-7xl font-bold text-navy leading-[1.15] mb-8 animate-fade-in delay-100">
+          Unlock Insights with{' '}
+          <span className="bg-gradient-to-r from-navy-muted via-dusty-rose to-peach bg-clip-text text-transparent animate-gradient">
+            AI-Powered
+          </span>{' '}
+          Analysis
+        </h1>
+
+        {/* Subtitle */}
+        <p className="text-lg md:text-xl text-navy/60 max-w-2xl mx-auto leading-relaxed mb-12 animate-fade-in delay-200 font-light">
+          Describe your analytical goal. MAGE&apos;s specialist agents will ingest your data,
+          mine patterns, and deliver{' '}
+          <span className="text-navy font-medium">RAG-grounded recommendations</span>{' '}
+          tailored to your expertise.
+        </p>
+
+        {/* CTA Buttons */}
+        <div className="flex items-center justify-center gap-4 animate-fade-in delay-300">
+          <Link
+            href="/dashboard/analysis/new"
+            className="bg-navy text-cream font-medium px-8 py-4 rounded-2xl hover:bg-navy-light transition-all hover:-translate-y-0.5 shadow-xl shadow-navy/10 flex items-center gap-3 text-base"
+          >
+            Start Analyzing
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
             </svg>
-            <div>
-              <p className="font-semibold mb-1">Analysis failed</p>
-              <p className="text-red-400">{error}</p>
+          </Link>
+          <Link
+            href="/dashboard"
+            className="font-medium text-navy bg-warm-white/50 backdrop-blur-md border border-navy/10 px-8 py-4 rounded-2xl hover:bg-warm-white hover:border-navy/20 transition-all text-base"
+          >
+            View Dashboard
+          </Link>
+        </div>
+      </section>
+
+      {/* ── Stats Row ──────────────────────────────────────────────────── */}
+      <section className="relative z-10 max-w-4xl mx-auto px-8 mb-28">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {STATS.map((stat, idx) => (
+            <div
+              key={stat.label}
+              className={`bg-warm-white/60 backdrop-blur-md border border-dusty-rose/20 rounded-3xl p-6 text-center animate-slide-up delay-${(idx + 1) * 100}`}
+            >
+              <p className="font-[family-name:var(--font-serif)] text-4xl font-bold text-navy mb-2">
+                {stat.value}
+              </p>
+              <p className="text-xs uppercase tracking-widest text-navy/50 font-medium">{stat.label}</p>
             </div>
-          </div>
-        )}
+          ))}
+        </div>
+      </section>
 
-        {/* ── Results Dashboard ─────────────────────────────────────────────── */}
-        {result && (
-          <section aria-label="Analysis results" className="space-y-6 animate-fade-in">
-            {/* Summary Card */}
-            <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 bg-indigo-500/20 rounded-xl flex items-center justify-center text-xl">✨</div>
-                <div>
-                  <h2 className="font-bold text-white">Analysis Summary</h2>
-                  <p className="text-xs text-slate-400 capitalize">{result.expertise_level} level</p>
-                </div>
-              </div>
-              <p className="text-slate-300 text-sm leading-relaxed">{result.summary}</p>
-            </div>
+      {/* ── How It Works ───────────────────────────────────────────────── */}
+      <section className="relative z-10 max-w-6xl mx-auto px-8 mb-32">
+        <div className="text-center mb-16">
+          <p className="text-xs font-medium text-dusty-rose uppercase tracking-widest mb-4">
+            Process
+          </p>
+          <h2 className="font-[family-name:var(--font-serif)] text-4xl md:text-5xl font-bold text-navy">
+            Four Steps to Insight
+          </h2>
+        </div>
 
-            {/* Agent Steps */}
-            <div>
-              <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-4 px-1">
-                Agent Pipeline
-              </h2>
-              <div className="grid grid-cols-2 gap-4">
-                {result.steps.map((step, idx) => (
-                  <div
-                    key={idx}
-                    className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-5"
-                  >
-                    <div className="flex items-center gap-3 mb-3">
-                      <span className="text-2xl">{AGENT_ICONS[step.agent] ?? '🤖'}</span>
-                      <div>
-                        <p className="font-semibold text-sm text-white">{step.agent}</p>
-                        <span
-                          className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                            step.status === 'success'
-                              ? 'bg-emerald-500/20 text-emerald-400'
-                              : 'bg-red-500/20 text-red-400'
-                          }`}
-                        >
-                          {step.status}
-                        </span>
-                      </div>
-                    </div>
-                    <p className="text-xs text-slate-400 font-mono truncate">
-                      {(step.output as { message?: string }).message ?? JSON.stringify(step.output).slice(0, 60)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Recommendations */}
-            {result.recommendations.length > 0 && (
-              <div>
-                <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-4 px-1">
-                  Recommendations
-                </h2>
-                <div className="space-y-3">
-                  {result.recommendations.map((rec, idx) => (
-                    <div
-                      key={idx}
-                      className="bg-indigo-500/5 border border-indigo-500/20 rounded-2xl p-4 flex items-start gap-3"
-                    >
-                      <span className="text-indigo-400 mt-0.5">→</span>
-                      <p className="text-sm text-slate-300 leading-relaxed">{rec}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* RAG Sources */}
-            {result.rag_sources.length > 0 && (
-              <div>
-                <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-3 px-1">
-                  Knowledge Sources
-                </h2>
-                <div className="flex flex-wrap gap-2">
-                  {result.rag_sources.map((src, idx) => (
-                    <span
-                      key={idx}
-                      className="bg-slate-800/60 border border-white/10 rounded-lg px-3 py-1 text-xs text-slate-400 font-mono"
-                    >
-                      📄 {src}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* ── Architecture Pills ────────────────────────────────────────────── */}
-        {!result && !isLoading && (
-          <section className="text-center mt-4">
-            <p className="text-xs text-slate-500 mb-4 uppercase tracking-widest font-medium">Powered by</p>
-            <div className="flex flex-wrap justify-center gap-2">
-              {[
-                'FastAPI', 'Next.js 14', 'ReAct Agents', 'FAISS / ChromaDB',
-                'LangChain', 'Pandas', 'Docker',
-              ].map((tech) => (
-                <span
-                  key={tech}
-                  className="bg-white/5 border border-white/10 rounded-full px-3 py-1 text-xs text-slate-400 hover:text-slate-300 hover:border-white/20 transition-colors"
-                >
-                  {tech}
+        <div className="grid md:grid-cols-4 gap-6">
+          {FEATURES.map((feature, idx) => (
+            <div
+              key={feature.title}
+              className={`group bg-warm-white/60 backdrop-blur-md border border-dusty-rose/15 rounded-[2rem] p-8 hover:shadow-2xl hover:shadow-navy/5 hover:border-dusty-rose/30 transition-all duration-500 animate-slide-up delay-${(idx + 1) * 100}`}
+            >
+              <div className="flex items-center gap-4 mb-6">
+                <span className="w-10 h-10 bg-lavender-light/50 rounded-2xl flex items-center justify-center text-navy-muted">
+                  {feature.icon}
                 </span>
-              ))}
+                <span className="text-sm font-bold text-navy/30">
+                  {String(idx + 1).padStart(2, '0')}
+                </span>
+              </div>
+              <h3 className="font-[family-name:var(--font-serif)] text-xl font-bold text-navy mb-3">
+                {feature.title}
+              </h3>
+              <p className="text-sm text-navy/60 leading-relaxed font-light">
+                {feature.description}
+              </p>
             </div>
-          </section>
-        )}
-      </div>
-    </main>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Tech Pills ─────────────────────────────────────────────────── */}
+      <section className="relative z-10 max-w-4xl mx-auto px-8 pb-32 text-center">
+        <p className="text-xs text-navy/40 uppercase tracking-widest font-medium mb-6">
+          Powered By
+        </p>
+        <div className="flex flex-wrap justify-center gap-3">
+          {TECH_PILLS.map((tech) => (
+            <span
+              key={tech}
+              className="bg-warm-white/60 backdrop-blur-sm border border-dusty-rose/15 rounded-full px-5 py-2.5 text-xs text-navy/60 font-medium hover:border-dusty-rose/40 hover:text-navy hover:bg-warm-white transition-all cursor-default"
+            >
+              {tech}
+            </span>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Footer ─────────────────────────────────────────────────────── */}
+      <footer className="relative z-10 bg-navy text-cream/50 py-16">
+        <div className="max-w-5xl mx-auto px-8 flex flex-col md:flex-row items-center justify-between gap-6">
+          <div className="flex items-center gap-3 text-cream">
+            <LogoIcon />
+            <span className="font-[family-name:var(--font-serif)] font-bold text-lg">MAGE</span>
+          </div>
+          <p className="text-sm font-light">Multi-Agent Goal-conditioned EDA</p>
+          <div className="flex gap-8 text-sm">
+            <Link href="/dashboard" className="hover:text-cream transition-colors">Dashboard</Link>
+            <Link href="/signin" className="hover:text-cream transition-colors">Sign In</Link>
+          </div>
+        </div>
+      </footer>
+    </div>
   );
 }
