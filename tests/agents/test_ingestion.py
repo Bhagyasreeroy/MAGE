@@ -1,7 +1,10 @@
 """
 tests/agents/test_ingestion.py
 ───────────────────────────────
-Tests for M1: IngestionAgent + DataIngestionEngine loading real files.
+M1 tests: DataIngestionEngine multi-format loading (CSV/TSV/JSON/Parquet/Excel).
+
+Complements test_ingestion_agent.py, which covers the IngestionAgent's
+Pydantic-based profiling contract in detail.
 """
 
 import os
@@ -11,71 +14,57 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from agents.ingestion_agent import IngestionAgent
-from data_pipeline.ingestion import DataIngestionEngine
+from data_pipeline.ingestion import DataIngestionEngine, IngestionError
 
-# Path to the sample CSV shipped in the repo.
-SAMPLE_CSV = os.path.join(
-    os.path.dirname(__file__), "..", "..", "data", "samples", "sales.csv"
-)
+SAMPLES = os.path.join(os.path.dirname(__file__), "..", "..", "data", "samples")
+SAMPLE_CSV = os.path.join(SAMPLES, "sales.csv")
+SAMPLE_JSON = os.path.join(SAMPLES, "sales.json")
+SAMPLE_PARQUET = os.path.join(SAMPLES, "sales.parquet")
+SAMPLE_XLSX = os.path.join(SAMPLES, "sales.xlsx")
 
-
-class TestDataIngestionEngine:
-    """Unit tests for the low-level loader."""
-
-    def test_load_csv_row_count(self) -> None:
-        result = DataIngestionEngine().load(SAMPLE_CSV)
-        assert result["row_count"] == 6
-
-    def test_load_csv_columns(self) -> None:
-        result = DataIngestionEngine().load(SAMPLE_CSV)
-        assert result["columns"] == [
-            "order_id",
-            "region",
-            "product",
-            "units",
-            "revenue",
-        ]
-
-    def test_load_missing_file_raises(self) -> None:
-        with pytest.raises(FileNotFoundError):
-            DataIngestionEngine().load("data/samples/does_not_exist.csv")
-
-    def test_load_unsupported_type_raises(self) -> None:
-        with pytest.raises(ValueError):
-            DataIngestionEngine().load("data/samples/notes.txt")
+EXPECTED_COLUMNS = ["order_id", "region", "product", "units", "revenue"]
 
 
-class TestIngestionAgent:
-    """Tests for the agent wrapper consumed by the Orchestrator."""
+class TestDataIngestionEngineFormats:
+    """The engine loads every supported tabular format to a real DataFrame."""
 
-    @pytest.fixture
-    def agent(self) -> IngestionAgent:
-        return IngestionAgent()
+    @pytest.mark.parametrize(
+        "path",
+        [SAMPLE_CSV, SAMPLE_JSON, SAMPLE_PARQUET, SAMPLE_XLSX],
+        ids=["csv", "json", "parquet", "xlsx"],
+    )
+    def test_load_row_count(self, path: str) -> None:
+        assert len(DataIngestionEngine().load(path)) == 6
 
-    def test_run_returns_real_row_count(self, agent: IngestionAgent) -> None:
-        result = agent.run(context={"data": {"path": SAMPLE_CSV}})
-        assert result["row_count"] == 6
+    @pytest.mark.parametrize(
+        "path",
+        [SAMPLE_CSV, SAMPLE_JSON, SAMPLE_PARQUET, SAMPLE_XLSX],
+        ids=["csv", "json", "parquet", "xlsx"],
+    )
+    def test_load_columns(self, path: str) -> None:
+        assert list(DataIngestionEngine().load(path).columns) == EXPECTED_COLUMNS
 
-    def test_run_returns_schema(self, agent: IngestionAgent) -> None:
-        result = agent.run(context={"data": {"path": SAMPLE_CSV}})
-        assert set(result["schema"].keys()) == {
-            "order_id",
-            "region",
-            "product",
-            "units",
-            "revenue",
-        }
+    def test_load_tsv(self, tmp_path) -> None:
+        p = tmp_path / "data.tsv"
+        p.write_text("a\tb\n1\t2\n3\t4\n")
+        df = DataIngestionEngine().load(str(p))
+        assert len(df) == 2
+        assert list(df.columns) == ["a", "b"]
 
-    def test_run_flags_missing_values(self, agent: IngestionAgent) -> None:
-        result = agent.run(context={"data": {"path": SAMPLE_CSV}})
-        # 'units' and 'revenue' each have one blank cell in the sample.
-        warned_columns = " ".join(result["quality_warnings"])
-        assert "units" in warned_columns
-        assert "revenue" in warned_columns
 
-    def test_run_without_data_is_graceful(self, agent: IngestionAgent) -> None:
-        """No path in context should not raise — keeps the skeleton smoke run green."""
-        result = agent.run(context={"goal": "profile data", "data": {}})
-        assert result["row_count"] == 0
-        assert result["quality_warnings"] == []
+class TestDataIngestionEngineErrors:
+    """The engine fails cleanly with informative exceptions."""
+
+    def test_missing_file_raises(self) -> None:
+        with pytest.raises(IngestionError, match="File not found"):
+            DataIngestionEngine().load(os.path.join(SAMPLES, "does_not_exist.csv"))
+
+    def test_unsupported_type_raises(self) -> None:
+        with pytest.raises(IngestionError, match="Unsupported extension"):
+            DataIngestionEngine().load(os.path.join(SAMPLES, "notes.txt"))
+
+    def test_empty_file_raises(self, tmp_path) -> None:
+        p = tmp_path / "empty.csv"
+        p.write_text("")
+        with pytest.raises(IngestionError, match="Empty file"):
+            DataIngestionEngine().load(str(p))
