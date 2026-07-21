@@ -127,3 +127,11 @@ class AnalysisResponse(BaseModel):
         default="",
         description="High-level summary of the analysis.",
     )
+    analysis_id: str | None = Field(
+        default=None,
+        description=(
+            "Id referencing the uploaded dataset for this session. Pass it back "
+            "on a follow-up /analysis/run call (instead of re-uploading a file) "
+            "to keep querying the same dataset."
+        ),
+    )

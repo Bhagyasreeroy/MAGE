@@ -41,18 +41,22 @@ async def run_analysis(
     goal: str = Form(...),
     expertise_level: ExpertiseLevel = Form(ExpertiseLevel.intermediate),
     file: UploadFile | None = File(None),
+    analysis_id: str | None = Form(None),
 ) -> AnalysisResponse:
     """
     Trigger the full MAGE pipeline for a given analytical goal.
 
-    - Accepts a natural-language goal, a user expertise level, and an
-      optional dataset file (multipart/form-data) in a single request.
+    - Accepts a natural-language goal, a user expertise level, and either
+      a dataset file (first request) or an analysis_id from a previous
+      response (follow-up requests, to keep querying the same dataset)
+      in a single multipart/form-data request.
     - Delegates to the OrchestratorAgent which runs the ReAct loop.
-    - Returns structured EDA recommendations grounded in the RAG layer.
+    - Returns structured EDA recommendations grounded in the RAG layer,
+      plus the analysis_id to reuse for follow-up calls.
     """
     request = AnalysisRequest(goal=goal, expertise_level=expertise_level)
     try:
-        result = await _orchestrator_service.run(request, file=file)
+        result = await _orchestrator_service.run(request, file=file, analysis_id=analysis_id)
         return result
     except Exception as exc:
         logger.exception("Analysis pipeline failed: %s", exc)

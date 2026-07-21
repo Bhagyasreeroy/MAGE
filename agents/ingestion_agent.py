@@ -80,6 +80,10 @@ class IngestionAgent:
 
         df = self._engine.load(target_source)
 
+        # Downstream agents (MiningAgent, VisualizationAgent) consume the
+        # canonical DataFrame directly rather than re-parsing the source.
+        context["dataframe"] = df
+
         row_count = len(df)
         column_count = len(df.columns)
         if row_count < 1:
