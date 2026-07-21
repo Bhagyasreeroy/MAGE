@@ -12,6 +12,23 @@
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+/**
+ * Extract a human-readable message from a FastAPI error response body.
+ * `detail` is a string for HTTPException, or an array of
+ * {loc, msg, type} for Pydantic validation errors (422s) — never assume
+ * one shape without checking, since `??` won't fall through a truthy array.
+ */
+export function parseApiError(body: unknown, status: number): string {
+  const detail = (body as { detail?: unknown } | null)?.detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d) => (typeof d === "object" && d && "msg" in d ? String(d.msg) : String(d))).join(", ");
+  }
+  if (typeof detail === "string") {
+    return detail;
+  }
+  return `Request failed (${status})`;
+}
+
 // ── Token storage ────────────────────────────────────────────────────────────
 
 export function getAccessToken(): string | null {
@@ -72,12 +89,7 @@ export async function apiFetch<T = unknown>(
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    const message =
-      body.detail ??
-      (Array.isArray(body.detail)
-        ? body.detail.map((d: { msg: string }) => d.msg).join(", ")
-        : `Request failed (${response.status})`);
-    throw new Error(message);
+    throw new Error(parseApiError(body, response.status));
   }
 
   return response.json() as Promise<T>;

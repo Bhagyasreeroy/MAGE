@@ -97,6 +97,15 @@ class IngestionResult(BaseModel):
     )
 
 
+class KnowledgeSource(BaseModel):
+    """A single document in the RAG knowledge base."""
+
+    source: str = Field(..., description="Relative source path, e.g. 'knowledge_base/missing_values.md'.")
+    title: str = Field(..., description="Document title.")
+    doc_type: str = Field(default="", description="Document type/category, e.g. 'methodology'.")
+    chunk_count: int = Field(..., description="Number of chunks this document was split into.")
+
+
 class AnalysisResponse(BaseModel):
     """Full EDA pipeline response returned to the client."""
 

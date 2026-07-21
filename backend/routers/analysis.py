@@ -18,9 +18,11 @@ from backend.schemas.analysis import (
     AnalysisResponse,
     ExpertiseLevel,
     IngestionResult,
+    KnowledgeSource,
 )
 from backend.services.orchestrator_service import OrchestratorService
 from data_pipeline.ingestion import IngestionError
+from rag.knowledge_loader import KnowledgeBaseLoader
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -58,6 +60,29 @@ async def run_analysis(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Analysis failed: {exc}",
         ) from exc
+
+
+@router.get(
+    "/knowledge-sources",
+    response_model=list[KnowledgeSource],
+    status_code=status.HTTP_200_OK,
+    summary="List documents in the RAG knowledge base",
+)
+async def list_knowledge_sources() -> list[KnowledgeSource]:
+    """Return the real EDA methodology documents the RecommendationAgent grounds on."""
+    chunks = KnowledgeBaseLoader().load_all()
+    by_source: dict[str, KnowledgeSource] = {}
+    for chunk in chunks:
+        source = chunk["source"]
+        if source not in by_source:
+            by_source[source] = KnowledgeSource(
+                source=source,
+                title=chunk["metadata"].get("title", source),
+                doc_type=chunk["metadata"].get("doc_type", ""),
+                chunk_count=0,
+            )
+        by_source[source].chunk_count += 1
+    return list(by_source.values())
 
 
 @router.post(
