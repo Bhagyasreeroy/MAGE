@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { AuthProvider, useAuth } from '../lib/auth-context';
 
 const DashboardIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -46,6 +47,12 @@ const BellIcon = () => (
   </svg>
 );
 
+const LogoutIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+  </svg>
+);
+
 const NAV_ITEMS = [
   { href: '/dashboard', label: 'Dashboard', icon: <DashboardIcon /> },
   { href: '/dashboard/analysis/new', label: 'New Analysis', icon: <AnalysisIcon /> },
@@ -59,7 +66,27 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
+  return (
+    <AuthProvider>
+      <DashboardShell>{children}</DashboardShell>
+    </AuthProvider>
+  );
+}
+
+function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { user, isLoading, logout } = useAuth();
+
+  if (isLoading || !user) {
+    return (
+      <div className="h-screen bg-cream flex items-center justify-center">
+        <svg className="animate-spin w-6 h-6 text-navy/40" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen bg-cream flex overflow-hidden">
@@ -113,14 +140,23 @@ export default function DashboardLayout({
 
         {/* User */}
         <div className="px-4 py-6 border-t border-white/5">
-          <div className="flex items-center gap-4 px-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-lavender to-dusty-rose rounded-xl flex items-center justify-center text-sm font-bold text-navy">
-              N
+          <div className="flex items-center gap-3 px-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-lavender to-dusty-rose rounded-xl flex items-center justify-center text-sm font-bold text-navy shrink-0">
+              {user.full_name.charAt(0).toUpperCase()}
             </div>
-            <div>
-              <p className="text-sm font-medium text-cream/90">Neha</p>
-              <p className="text-xs text-cream/40">Free Plan</p>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-cream/90 truncate">{user.full_name}</p>
+              <p className="text-xs text-cream/40 truncate">{user.email}</p>
             </div>
+            <button
+              type="button"
+              onClick={logout}
+              aria-label="Sign out"
+              title="Sign out"
+              className="text-cream/30 hover:text-cream/80 transition-colors shrink-0"
+            >
+              <LogoutIcon />
+            </button>
           </div>
         </div>
       </aside>

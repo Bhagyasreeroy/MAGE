@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useAuth } from '../lib/auth-context';
 
 const RECENT_ANALYSES = [
   {
@@ -69,12 +70,15 @@ const UploadIcon = () => (
 );
 
 export default function DashboardPage() {
+  const { user } = useAuth();
+  const firstName = user?.full_name.split(' ')[0] ?? '';
+
   return (
     <div className="max-w-5xl mx-auto">
       {/* ── Welcome ────────────────────────────────────────────────── */}
       <div className="mb-12 animate-fade-in">
         <h1 className="font-[family-name:var(--font-serif)] text-4xl font-bold text-navy mb-2">
-          Welcome back, Neha
+          Welcome back, {firstName}
         </h1>
         <p className="text-navy/50 text-lg font-light">
           Here&apos;s what&apos;s happening with your analyses.
