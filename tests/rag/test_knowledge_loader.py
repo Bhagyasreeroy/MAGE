@@ -73,3 +73,26 @@ class TestKnowledgeBaseLoader:
     def test_missing_file_returns_empty_list(self, tmp_path) -> None:
         loader = KnowledgeBaseLoader(kb_dir=tmp_path)
         assert loader.load_file(tmp_path / "nope.md") == []
+
+    def test_markdown_table_is_never_split_mid_row(self, tmp_path) -> None:
+        table = (
+            "| Goal | Data shape | Recommended chart |\n"
+            "|---|---|---|\n"
+            "| Understand single-column distribution | Numeric | Histogram + KDE overlay |\n"
+            "| Understand single-column distribution | Categorical | Bar chart (sorted by frequency) |\n"
+            "| Compare distributions across a group | Numeric x categorical | Box plot or violin plot |\n"
+            "| Relationship between two numeric columns | Numeric x numeric | Scatter plot |\n"
+        )
+        doc = tmp_path / "table.md"
+        doc.write_text(f"Some leading prose that pads the buffer before the table.\n\n{table}", encoding="utf-8")
+
+        # Small chunk_size forces the leading prose + table combination to overflow.
+        loader = KnowledgeBaseLoader(kb_dir=tmp_path, chunk_size=120, chunk_overlap=20)
+        chunks = loader.load_file(doc)
+
+        table_chunks = [c["text"] for c in chunks if "|" in c["text"]]
+        assert len(table_chunks) == 1, "the table must land in exactly one chunk, never split across chunks"
+        assert table_chunks[0].count("\n|") == table.count("\n|") or table.strip() in table_chunks[0]
+        # Every row must appear together with its header — no row-only fragment.
+        assert "| Goal | Data shape | Recommended chart |" in table_chunks[0]
+        assert "Scatter plot |" in table_chunks[0]
