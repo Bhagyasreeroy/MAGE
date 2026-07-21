@@ -19,6 +19,7 @@ from typing import Any
 
 from fastapi import UploadFile
 
+from backend.core.dataset_store import dataset_store
 from backend.schemas.analysis import AnalysisRequest, AnalysisResponse
 from agents.orchestrator import OrchestratorAgent
 
@@ -38,18 +39,38 @@ class OrchestratorService:
     def __init__(self) -> None:
         self._agent = OrchestratorAgent()
 
-    async def run(self, request: AnalysisRequest, file: UploadFile | None = None) -> AnalysisResponse:
-        """Orchestrate a full MAGE pipeline run for the given request."""
+    async def run(
+        self,
+        request: AnalysisRequest,
+        file: UploadFile | None = None,
+        analysis_id: str | None = None,
+    ) -> AnalysisResponse:
+        """Orchestrate a full MAGE pipeline run for the given request.
+
+        If `file` is given, it's ingested and also cached under a new
+        analysis_id so a later call can pass that id instead of the file
+        to keep querying the same dataset. If only `analysis_id` is given,
+        the previously-uploaded file is looked up and reused.
+        """
+        data: dict[str, Any] = dict(request.metadata)
+        resolved_id = analysis_id
+
+        if file is not None:
+            content = await file.read()
+            resolved_id = dataset_store.put(file.filename or "dataset", content)
+            data["source"] = dataset_store.get(resolved_id)
+        elif analysis_id is not None:
+            stored = dataset_store.get(analysis_id)
+            if stored is not None:
+                data["source"] = stored
+
         logger.info(
-            "Starting analysis | goal=%r expertise=%s file=%s",
+            "Starting analysis | goal=%r expertise=%s analysis_id=%s has_source=%s",
             request.goal,
             request.expertise_level,
-            file.filename if file else None,
+            resolved_id,
+            "source" in data,
         )
-
-        data: dict[str, Any] = dict(request.metadata)
-        if file is not None:
-            data["source"] = file
 
         raw_result = self._agent.run(
             goal=request.goal,
@@ -64,4 +85,5 @@ class OrchestratorService:
             recommendations=raw_result.get("recommendations", []),
             rag_sources=raw_result.get("rag_sources", []),
             summary=raw_result.get("summary", ""),
+            analysis_id=resolved_id,
         )

@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { parseApiError } from '../../../lib/api';
+import { BarChart, BoxPlot, ClusterScatter, CorrelationHeatmap, Histogram } from '../../../components/charts';
 
 interface StepResult {
   agent: string;
@@ -17,6 +19,19 @@ interface AnalysisResult {
   recommendations: string[];
   rag_sources: string[];
   summary: string;
+  analysis_id?: string | null;
+}
+
+interface DataQualityRow {
+  completeness_pct: number;
+  uniqueness_pct: number;
+  missing_count: number;
+}
+
+interface VizSpec {
+  type: string;
+  title: string;
+  [key: string]: unknown;
 }
 
 function stepSummary(step: StepResult): string {
@@ -61,25 +76,20 @@ const SendIcon = () => (
   </svg>
 );
 
-// Initial mockup chat history
-const INITIAL_CHAT = [
-  {
-    id: 1,
-    role: 'user',
-    content: 'Can you show me the breakdown of churn by contract type specifically for senior citizens?',
-  },
-  {
-    id: 2,
-    role: 'assistant',
-    content: 'Certainly! I\'ve queried the dataset for senior citizens. Among this demographic, month-to-month contracts still have the highest churn rate (48%), which is slightly higher than the general population (42%). One year and two-year contracts for seniors have negligible churn (<2%). Would you like me to generate a visualization for this?',
-  }
-];
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+}
 
 export default function AnalysisResultPage() {
   const params = useParams<{ id: string }>();
   const [result, setResult] = useState<AnalysisResult | null | undefined>(undefined);
   const [chatInput, setChatInput] = useState('');
-  const [chatHistory, setChatHistory] = useState(INITIAL_CHAT);
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [isSending, setIsSending] = useState(false);
+
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
   useEffect(() => {
     const stored = sessionStorage.getItem(`mage-analysis-${params.id}`);
@@ -110,29 +120,50 @@ export default function AnalysisResultPage() {
     );
   }
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  async function handleSendMessage(e: React.FormEvent) {
     e.preventDefault();
-    if (!chatInput.trim()) return;
+    const goal = chatInput.trim();
+    if (!goal || isSending || !result) return;
 
-    // Add user message
-    const newMessage = {
-      id: Date.now(),
-      role: 'user',
-      content: chatInput.trim(),
-    };
-    
-    setChatHistory([...chatHistory, newMessage]);
+    setChatHistory((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', content: goal }]);
     setChatInput('');
+    setIsSending(true);
 
-    // Mock AI response
-    setTimeout(() => {
-      setChatHistory(prev => [...prev, {
-        id: Date.now() + 1,
-        role: 'assistant',
-        content: "I'm looking into that now. The agents are mining the dataset for new patterns based on your query...",
-      }]);
-    }, 1000);
-  };
+    try {
+      const formData = new FormData();
+      formData.append('goal', goal);
+      formData.append('expertise_level', result.expertise_level);
+      if (result.analysis_id) {
+        // Re-references the same uploaded dataset server-side — no
+        // re-upload needed, and the full pipeline (real stats + RAG)
+        // re-runs against it for this new goal.
+        formData.append('analysis_id', result.analysis_id);
+      }
+
+      const res = await fetch(`${apiUrl}/analysis/run`, { method: 'POST', body: formData });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(parseApiError(errBody, res.status));
+      }
+
+      const data: AnalysisResult = await res.json();
+      // Keep analysis_id current in case the backend rotated/re-issued it.
+      if (data.analysis_id) {
+        setResult((prev) => (prev ? { ...prev, analysis_id: data.analysis_id } : prev));
+      }
+      const reply =
+        data.recommendations.length > 0
+          ? data.recommendations.join('\n\n')
+          : "I couldn't ground a recommendation for that — try rephrasing.";
+
+      setChatHistory((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: reply }]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Something went wrong';
+      setChatHistory((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `Error: ${message}` }]);
+    } finally {
+      setIsSending(false);
+    }
+  }
 
   return (
     <div className="max-w-4xl mx-auto pb-32">
@@ -195,6 +226,84 @@ export default function AnalysisResultPage() {
           </div>
         </div>
 
+        {/* Data Quality */}
+        {(() => {
+          const miningOutput = result.steps.find((s) => s.agent === 'MiningAgent')?.output;
+          const dataQuality = miningOutput?.data_quality as Record<string, DataQualityRow> | undefined;
+          if (!dataQuality || Object.keys(dataQuality).length === 0) return null;
+
+          return (
+            <div className="mb-8">
+              <h3 className="text-xs font-bold text-navy/40 uppercase tracking-widest mb-3">Data Quality</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs text-navy/40 uppercase tracking-wide">
+                      <th className="pb-2 pr-4">Column</th>
+                      <th className="pb-2 pr-4">Completeness</th>
+                      <th className="pb-2 pr-4">Uniqueness</th>
+                      <th className="pb-2">Missing</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(dataQuality).map(([col, q]) => (
+                      <tr key={col} className="border-t border-dusty-rose/10">
+                        <td className="py-2 pr-4 font-medium text-navy">{col}</td>
+                        <td className="py-2 pr-4 text-navy/60">{q.completeness_pct}%</td>
+                        <td className="py-2 pr-4 text-navy/60">{q.uniqueness_pct}%</td>
+                        <td className="py-2 text-navy/60">{q.missing_count}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Visualizations */}
+        {(() => {
+          const vizOutput = result.steps.find((s) => s.agent === 'VisualizationAgent')?.output;
+          const specs = (vizOutput?.viz_specs as VizSpec[] | undefined) ?? [];
+          if (specs.length === 0) return null;
+
+          return (
+            <div className="mb-8">
+              <h3 className="text-xs font-bold text-navy/40 uppercase tracking-widest mb-3">Visualizations</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {specs.map((spec, idx) => (
+                  <div key={idx} className="bg-cream/40 border border-dusty-rose/15 rounded-2xl p-5">
+                    <p className="text-xs font-bold text-navy mb-3">{spec.title}</p>
+                    {spec.type === 'histogram' && <Histogram bins={spec.bins as { label: string; count: number }[]} />}
+                    {spec.type === 'bar' && <BarChart items={spec.items as { label: string; value: number }[]} />}
+                    {spec.type === 'feature_importance' && (
+                      <BarChart items={spec.items as { label: string; value: number }[]} />
+                    )}
+                    {spec.type === 'boxplot' && (
+                      <BoxPlot
+                        min={spec.min as number | null}
+                        q1={spec.q1 as number | null}
+                        median={spec.median as number | null}
+                        q3={spec.q3 as number | null}
+                        max={spec.max as number | null}
+                      />
+                    )}
+                    {spec.type === 'correlation_heatmap' && (
+                      <CorrelationHeatmap
+                        columns={spec.columns as string[]}
+                        matrix={spec.matrix as (number | null)[][]}
+                      />
+                    )}
+                    {spec.type === 'cluster_scatter' && (
+                      <ClusterScatter points={spec.points as { x: number; y: number; cluster: number }[]} />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Recommendations */}
         <div className="mb-8">
           <h3 className="text-xs font-bold text-navy/40 uppercase tracking-widest mb-3">Recommendations</h3>
@@ -229,6 +338,13 @@ export default function AnalysisResultPage() {
 
       {/* ── Continuous Chat History ────────────────────────────────── */}
       <div className="space-y-6 animate-slide-up delay-200">
+        {chatHistory.length === 0 && (
+          <p className="text-navy/40 font-light text-sm text-center">
+            {result.analysis_id
+              ? 'Ask a follow-up — it re-runs the full pipeline against the same dataset, goal-conditioned on your new question.'
+              : 'Ask a follow-up — it re-runs the pipeline goal-conditioned on your new question (no dataset was uploaded for this run).'}
+          </p>
+        )}
         {chatHistory.map((msg) => (
           <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[80%] rounded-[2rem] p-6 ${
@@ -248,6 +364,16 @@ export default function AnalysisResultPage() {
             </div>
           </div>
         ))}
+        {isSending && (
+          <div className="flex justify-start">
+            <div className="max-w-[80%] rounded-[2rem] rounded-tl-none p-6 bg-warm-white/80 border border-dusty-rose/20 shadow-sm shadow-navy/5">
+              <div className="flex items-center gap-2 text-navy-muted">
+                <SparkleIcon />
+                <span className="text-xs font-bold uppercase tracking-widest">MAGE is thinking…</span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Sticky Chat Input ──────────────────────────────────────── */}
@@ -258,12 +384,13 @@ export default function AnalysisResultPage() {
               type="text"
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
-              placeholder="Ask a follow-up question or request a new visualization..."
-              className="w-full bg-warm-white/90 backdrop-blur-md border border-dusty-rose/30 rounded-full pl-6 pr-16 py-5 text-navy placeholder:text-navy/40 shadow-xl shadow-navy/5 focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all"
+              placeholder="Ask a follow-up question…"
+              disabled={isSending}
+              className="w-full bg-warm-white/90 backdrop-blur-md border border-dusty-rose/30 rounded-full pl-6 pr-16 py-5 text-navy placeholder:text-navy/40 shadow-xl shadow-navy/5 focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all disabled:opacity-60"
             />
             <button
               type="submit"
-              disabled={!chatInput.trim()}
+              disabled={!chatInput.trim() || isSending}
               className="absolute right-3 top-3 bottom-3 w-12 bg-navy text-cream rounded-full flex items-center justify-center hover:bg-navy-light disabled:opacity-50 disabled:hover:bg-navy transition-all"
             >
               <SendIcon />
