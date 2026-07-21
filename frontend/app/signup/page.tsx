@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { registerUser, loginUser } from '../lib/api';
 
 const LogoIcon = () => (
   <svg className="w-10 h-10 text-cream" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -15,23 +17,49 @@ const CheckIcon = () => (
   </svg>
 );
 
+// Synced with the backend Pydantic validator in backend/schemas/auth.py
+const PASSWORD_RULES = [
+  { label: 'At least 8 characters', test: (p: string) => p.length >= 8 },
+  { label: 'One uppercase letter', test: (p: string) => /[A-Z]/.test(p) },
+  { label: 'One lowercase letter', test: (p: string) => /[a-z]/.test(p) },
+  { label: 'One digit', test: (p: string) => /\d/.test(p) },
+  { label: 'One special character', test: (p: string) => /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(p) },
+];
+
 export default function SignUpPage() {
+  const router = useRouter();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const passwordStrength = password.length === 0 ? 0 : password.length < 6 ? 1 : password.length < 10 ? 2 : 3;
+  const allRulesMet = PASSWORD_RULES.every((r) => r.test(password));
+  const canSubmit = name.trim().length >= 2 && email.includes('@') && allRulesMet;
+
+  const passwordStrength = password.length === 0 ? 0 : allRulesMet ? 3 : password.length >= 8 ? 2 : 1;
   const strengthLabels = ['', 'Weak', 'Good', 'Strong'];
   const strengthColors = ['', 'bg-red-400', 'bg-peach', 'bg-sage'];
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError('');
+
+    if (!allRulesMet) {
+      setError('Password does not meet the complexity requirements below.');
+      return;
+    }
+
     setIsLoading(true);
-    setTimeout(() => {
+    try {
+      await registerUser({ email, full_name: name, password });
+      await loginUser({ email, password });
+      router.push('/dashboard');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Registration failed.');
+    } finally {
       setIsLoading(false);
-      window.location.href = '/signin';
-    }, 1000);
+    }
   }
 
   return (
@@ -93,6 +121,19 @@ export default function SignUpPage() {
             Get started with MAGE in seconds.
           </p>
 
+          {error && (
+            <div
+              role="alert"
+              className="flex items-center gap-2 mb-6 px-4 py-3 rounded-2xl text-sm text-red-600 bg-red-50 border border-red-200"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0">
+                <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+                <path d="M8 4.5v4M8 10.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+              {error}
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
               <label htmlFor="name" className="block text-xs font-semibold text-navy/70 mb-2 uppercase tracking-wide">
@@ -106,6 +147,9 @@ export default function SignUpPage() {
                 placeholder="Your name"
                 className="w-full bg-warm-white/80 border border-dusty-rose/30 rounded-2xl px-5 py-4 text-navy placeholder:text-navy/30 focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all text-sm"
                 required
+                minLength={2}
+                maxLength={200}
+                autoComplete="name"
               />
             </div>
 
@@ -121,6 +165,7 @@ export default function SignUpPage() {
                 placeholder="you@example.com"
                 className="w-full bg-warm-white/80 border border-dusty-rose/30 rounded-2xl px-5 py-4 text-navy placeholder:text-navy/30 focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all text-sm"
                 required
+                autoComplete="email"
               />
             </div>
 
@@ -136,31 +181,49 @@ export default function SignUpPage() {
                 placeholder="••••••••"
                 className="w-full bg-warm-white/80 border border-dusty-rose/30 rounded-2xl px-5 py-4 text-navy placeholder:text-navy/30 focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all text-sm"
                 required
-                minLength={6}
+                minLength={8}
+                maxLength={128}
+                autoComplete="new-password"
               />
               {/* Password strength */}
               {password.length > 0 && (
-                <div className="mt-3 flex items-center gap-3">
-                  <div className="flex-1 flex gap-1.5">
-                    {[1, 2, 3].map((level) => (
-                      <div
-                        key={level}
-                        className={`h-1.5 flex-1 rounded-full transition-colors ${
-                          passwordStrength >= level ? strengthColors[passwordStrength] : 'bg-navy/10'
-                        }`}
-                      />
-                    ))}
+                <>
+                  <div className="mt-3 flex items-center gap-3">
+                    <div className="flex-1 flex gap-1.5">
+                      {[1, 2, 3].map((level) => (
+                        <div
+                          key={level}
+                          className={`h-1.5 flex-1 rounded-full transition-colors ${
+                            passwordStrength >= level ? strengthColors[passwordStrength] : 'bg-navy/10'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                    <span className="text-xs text-navy/40 font-medium w-12 text-right">
+                      {strengthLabels[passwordStrength]}
+                    </span>
                   </div>
-                  <span className="text-xs text-navy/40 font-medium w-12 text-right">
-                    {strengthLabels[passwordStrength]}
-                  </span>
-                </div>
+                  <ul className="mt-3 space-y-1">
+                    {PASSWORD_RULES.map((rule) => {
+                      const met = rule.test(password);
+                      return (
+                        <li
+                          key={rule.label}
+                          className={`flex items-center gap-2 text-xs ${met ? 'text-sage' : 'text-navy/40'}`}
+                        >
+                          <span className="w-3 text-center font-bold">{met ? '✓' : '·'}</span>
+                          {rule.label}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </>
               )}
             </div>
 
             <button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || !canSubmit}
               className="w-full bg-navy text-cream font-medium py-4 rounded-2xl hover:bg-navy-light disabled:opacity-60 disabled:cursor-not-allowed transition-all hover:-translate-y-0.5 shadow-xl shadow-navy/10 flex items-center justify-center gap-3 mt-4"
             >
               {isLoading ? (

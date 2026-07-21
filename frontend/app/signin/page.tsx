@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { loginUser } from '../lib/api';
 
 const LogoIcon = () => (
   <svg className="w-10 h-10 text-cream" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -10,17 +12,25 @@ const LogoIcon = () => (
 );
 
 export default function SignInPage() {
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError('');
     setIsLoading(true);
-    setTimeout(() => {
+
+    try {
+      await loginUser({ email, password });
+      router.push('/dashboard');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sign in failed.');
+    } finally {
       setIsLoading(false);
-      window.location.href = '/dashboard';
-    }, 1000);
+    }
   }
 
   return (
@@ -70,6 +80,19 @@ export default function SignInPage() {
             Sign in to continue to your dashboard.
           </p>
 
+          {error && (
+            <div
+              role="alert"
+              className="flex items-center gap-2 mb-6 px-4 py-3 rounded-2xl text-sm text-red-600 bg-red-50 border border-red-200"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0">
+                <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+                <path d="M8 4.5v4M8 10.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+              {error}
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
               <label htmlFor="email" className="block text-xs font-semibold text-navy/70 mb-2 uppercase tracking-wide">
@@ -83,6 +106,7 @@ export default function SignInPage() {
                 placeholder="you@example.com"
                 className="w-full bg-warm-white/80 border border-dusty-rose/30 rounded-2xl px-5 py-4 text-navy placeholder:text-navy/30 focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all text-sm"
                 required
+                autoComplete="email"
               />
             </div>
 
@@ -98,6 +122,7 @@ export default function SignInPage() {
                 placeholder="••••••••"
                 className="w-full bg-warm-white/80 border border-dusty-rose/30 rounded-2xl px-5 py-4 text-navy placeholder:text-navy/30 focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all text-sm"
                 required
+                autoComplete="current-password"
               />
             </div>
 
