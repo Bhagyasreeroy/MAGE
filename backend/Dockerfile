@@ -14,8 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy pyproject.toml first (leverages layer caching)
-COPY backend/pyproject.toml ./
+# Copy pyproject.toml + README first (hatchling requires the declared
+# readme to exist at build time) — leverages layer caching.
+COPY backend/pyproject.toml backend/README.md ./
 
 # Install pip + hatch, then install the project's dependencies
 RUN pip install --upgrade pip hatch && \
@@ -27,6 +28,7 @@ RUN pip install --upgrade pip hatch && \
         pytest-asyncio \
         python-multipart \
         pydantic \
+        "pydantic[email]" \
         pydantic-settings \
         python-dotenv \
         langchain \
@@ -34,11 +36,16 @@ RUN pip install --upgrade pip hatch && \
         langchain-openai \
         faiss-cpu \
         chromadb \
+        sentence-transformers \
         pandas \
         numpy \
         pyarrow \
         openpyxl \
-        httpx
+        httpx \
+        "sqlalchemy[asyncio]" \
+        aiosqlite \
+        "passlib[bcrypt]" \
+        "python-jose[cryptography]"
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime
