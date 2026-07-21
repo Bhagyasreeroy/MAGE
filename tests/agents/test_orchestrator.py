@@ -91,3 +91,36 @@ class TestOrchestratorAgent:
     ) -> None:
         result = orchestrator.run(goal="Analyse product metrics", expertise_level=expertise_level)
         assert result["expertise_level"] == expertise_level
+
+    def test_failing_agent_is_recorded_and_pipeline_continues(
+        self, orchestrator: OrchestratorAgent
+    ) -> None:
+        """A specialist raising must be caught, logged as 'error', not crash the run."""
+
+        class FailingAgent:
+            def run(self, context=None):
+                raise RuntimeError("boom")
+
+        orchestrator._agents[MINING] = FailingAgent()
+        result = orchestrator.run(goal="Cluster the customers into segments")
+
+        agents = [s["agent_name"] for s in result["steps"]]
+        mining_step = next(s for s in result["steps"] if s["agent_name"] == MINING)
+        assert mining_step["status"] == "error"
+        assert "boom" in mining_step["observation"]
+        # Pipeline kept going: a step after mining still ran.
+        assert "RecommendationAgent" in agents
+
+    def test_target_column_refined_from_ingested_schema(
+        self, orchestrator: OrchestratorAgent, tmp_path
+    ) -> None:
+        """After ingestion reveals the schema, a goal-named column becomes the target."""
+        csv = tmp_path / "customers.csv"
+        csv.write_text("churn,tenure\n1,12\n0,4\n1,7\n", encoding="utf-8")
+
+        result = orchestrator.run(
+            goal="Predict churn for each customer",
+            data={"source": str(csv)},
+        )
+        assert result["task_type"] == "classification"
+        assert result["classification"]["target_column"] == "churn"

@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from agents.goal_classifier import GoalClassifier, RuleBasedProvider
+from agents.goal_classifier import EmbeddingProvider, GoalClassifier, RuleBasedProvider
 from backend.schemas.analysis import (
     ColumnStats,
     ColumnSummary,
@@ -79,3 +79,37 @@ class TestGoalClassifier:
     def test_always_returns_classification_object(self, classifier: GoalClassifier) -> None:
         for goal in ["", "cluster the data", "totally unrelated text"]:
             assert isinstance(classifier.classify(goal), GoalClassification)
+
+
+class TestEmbeddingProvider:
+    """
+    Covers the local embedding zero-shot fallback. Calls the provider directly
+    (rules are bypassed), so wording need not avoid keywords. Loads the
+    sentence-transformers model — slower, but exercises the real path.
+    """
+
+    @pytest.fixture
+    def provider(self) -> EmbeddingProvider:
+        # The sentence-transformers model is cached at module scope in
+        # rag.embeddings, so re-instantiating per test is cheap.
+        return EmbeddingProvider()
+
+    def test_returns_valid_classification(self, provider: EmbeddingProvider) -> None:
+        result = provider.classify("understand what this dataset contains", [])
+        assert isinstance(result, GoalClassification)
+        assert result.task_type in set(TaskType)
+        assert 0.0 <= result.confidence <= 1.0
+
+    def test_empty_goal_returns_none(self, provider: EmbeddingProvider) -> None:
+        assert provider.classify("   ", []) is None
+
+    @pytest.mark.parametrize(
+        "goal, expected",
+        [
+            ("predict a continuous numeric amount like next month revenue", TaskType.regression),
+            ("group similar customers into distinct segments", TaskType.clustering),
+            ("find unusual outlier records that stand out", TaskType.anomaly_detection),
+        ],
+    )
+    def test_semantic_routing(self, provider: EmbeddingProvider, goal, expected) -> None:
+        assert provider.classify(goal, []).task_type == expected
