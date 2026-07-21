@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
+import { parseApiError } from '../../../lib/api';
 
 type ExpertiseLevel = 'beginner' | 'intermediate' | 'expert';
 
@@ -62,8 +63,8 @@ export default function NewAnalysisPage() {
       });
 
       if (!res.ok) {
-        const errBody = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(errBody.detail ?? `HTTP ${res.status}`);
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(parseApiError(errBody, res.status));
       }
 
       const data = await res.json();

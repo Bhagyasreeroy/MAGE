@@ -1,36 +1,33 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { fetchCurrentUser, type UserProfile } from '../lib/api';
 
-const RECENT_ANALYSES = [
-  {
-    id: '1',
-    goal: 'Identify top factors driving customer churn in Q4 2025',
-    status: 'complete',
-    expertise: 'intermediate',
-    date: '2 hours ago',
-  },
-  {
-    id: '2',
-    goal: 'Analyze revenue trends across product categories',
-    status: 'complete',
-    expertise: 'expert',
-    date: 'Yesterday',
-  },
-  {
-    id: '3',
-    goal: 'Find correlations between marketing spend and conversions',
-    status: 'running',
-    expertise: 'beginner',
-    date: 'Just now',
-  },
-];
+interface RecentAnalysis {
+  id: string;
+  goal: string;
+}
 
-const STATUS_STYLES: Record<string, string> = {
-  complete: 'bg-sage-light/40 text-sage border-sage/20',
-  running: 'bg-peach-light/30 text-peach border-peach/20',
-  failed: 'bg-dusty-rose/20 text-dusty-rose border-dusty-rose/30',
-};
+// Analysis runs aren't persisted server-side yet — we only know about
+// results from this browser session (see sessionStorage in the New
+// Analysis / results pages), so "recent" here means "this session," not
+// a real history. No fabricated data is shown if the list is empty.
+function readRecentAnalysesFromSession(): RecentAnalysis[] {
+  if (typeof window === 'undefined') return [];
+  const results: RecentAnalysis[] = [];
+  for (let i = 0; i < sessionStorage.length; i++) {
+    const key = sessionStorage.key(i);
+    if (!key?.startsWith('mage-analysis-')) continue;
+    try {
+      const data = JSON.parse(sessionStorage.getItem(key) ?? '{}');
+      results.push({ id: key.replace('mage-analysis-', ''), goal: data.goal ?? 'Untitled analysis' });
+    } catch {
+      // skip malformed entries
+    }
+  }
+  return results;
+}
 
 const ChartIcon = () => (
   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -69,12 +66,20 @@ const UploadIcon = () => (
 );
 
 export default function DashboardPage() {
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [recentAnalyses, setRecentAnalyses] = useState<RecentAnalysis[]>([]);
+
+  useEffect(() => {
+    fetchCurrentUser().then(setUser).catch(() => {});
+    setRecentAnalyses(readRecentAnalysesFromSession());
+  }, []);
+
   return (
     <div className="max-w-5xl mx-auto">
       {/* ── Welcome ────────────────────────────────────────────────── */}
       <div className="mb-12 animate-fade-in">
         <h1 className="font-[family-name:var(--font-serif)] text-4xl font-bold text-navy mb-2">
-          Welcome back, Neha
+          Welcome back{user?.full_name ? `, ${user.full_name}` : ''}
         </h1>
         <p className="text-navy/50 text-lg font-light">
           Here&apos;s what&apos;s happening with your analyses.
@@ -84,9 +89,9 @@ export default function DashboardPage() {
       {/* ── Stat Cards ─────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
         {[
-          { label: 'Total Analyses', value: '12', icon: <ChartIcon />, change: '+3 this week' },
-          { label: 'Datasets', value: '5', icon: <FolderIcon />, change: '2 new' },
-          { label: 'Recommendations', value: '48', icon: <LightbulbIcon />, change: 'Generated' },
+          { label: 'Analyses This Session', value: String(recentAnalyses.length), icon: <ChartIcon /> },
+          { label: 'Datasets', icon: <FolderIcon />, value: '—' },
+          { label: 'Recommendations', icon: <LightbulbIcon />, value: '—' },
         ].map((stat, idx) => (
           <div
             key={stat.label}
@@ -95,9 +100,6 @@ export default function DashboardPage() {
             <div className="flex items-center justify-between mb-6">
               <span className="text-navy-muted bg-lavender-light/30 p-3 rounded-2xl">
                 {stat.icon}
-              </span>
-              <span className="text-xs text-navy/40 font-medium bg-cream-dark px-3 py-1 rounded-full uppercase tracking-wider">
-                {stat.change}
               </span>
             </div>
             <p className="font-[family-name:var(--font-serif)] text-4xl font-bold text-navy mb-2">
@@ -148,39 +150,42 @@ export default function DashboardPage() {
           <h2 className="font-[family-name:var(--font-serif)] text-2xl font-bold text-navy">
             Recent Analyses
           </h2>
-          <button className="text-sm text-navy/40 hover:text-navy/60 font-medium transition-colors flex items-center gap-1">
-            View All <ArrowRightIcon />
-          </button>
         </div>
 
-        <div className="space-y-4">
-          {RECENT_ANALYSES.map((analysis) => (
+        {recentAnalyses.length === 0 ? (
+          <div className="bg-warm-white/60 border border-dashed border-dusty-rose/30 rounded-3xl p-10 text-center">
+            <p className="text-navy/50 font-light mb-4">
+              No analyses yet this session. Run one to see it here.
+            </p>
             <Link
-              key={analysis.id}
-              href={`/dashboard/analysis/${analysis.id}`}
-              className="group block bg-warm-white/80 backdrop-blur-sm border border-dusty-rose/20 rounded-3xl p-6 hover:shadow-lg hover:shadow-navy/5 hover:border-dusty-rose/40 transition-all"
+              href="/dashboard/analysis/new"
+              className="inline-block bg-navy text-cream font-semibold px-6 py-3 rounded-2xl hover:bg-navy-light transition-all text-sm"
             >
-              <div className="flex items-center gap-5">
-                <div className="flex-1 min-w-0">
-                  <p className="text-base font-semibold text-navy group-hover:text-navy-light transition-colors truncate">
-                    {analysis.goal}
-                  </p>
-                  <div className="flex items-center gap-3 mt-3">
-                    <span className={`text-xs font-semibold px-3 py-1 rounded-full border uppercase tracking-wider ${STATUS_STYLES[analysis.status]}`}>
-                      {analysis.status === 'running' && '● '}
-                      {analysis.status}
-                    </span>
-                    <span className="text-xs text-navy/40 uppercase tracking-wider">{analysis.expertise}</span>
+              Start New Analysis
+            </Link>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {recentAnalyses.map((analysis) => (
+              <Link
+                key={analysis.id}
+                href={`/dashboard/analysis/${analysis.id}`}
+                className="group block bg-warm-white/80 backdrop-blur-sm border border-dusty-rose/20 rounded-3xl p-6 hover:shadow-lg hover:shadow-navy/5 hover:border-dusty-rose/40 transition-all"
+              >
+                <div className="flex items-center gap-5">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-base font-semibold text-navy group-hover:text-navy-light transition-colors truncate">
+                      {analysis.goal}
+                    </p>
+                  </div>
+                  <div className="text-navy/20 group-hover:text-navy/40 shrink-0 transition-colors">
+                    <ArrowRightIcon />
                   </div>
                 </div>
-                <span className="text-sm text-navy/40 shrink-0 font-light">{analysis.date}</span>
-                <div className="text-navy/20 group-hover:text-navy/40 shrink-0 transition-colors">
-                  <ArrowRightIcon />
-                </div>
-              </div>
-            </Link>
-          ))}
-        </div>
+              </Link>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

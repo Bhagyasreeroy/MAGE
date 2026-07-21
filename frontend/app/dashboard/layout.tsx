@@ -1,7 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { fetchCurrentUser, logout, type UserProfile } from '../lib/api';
 
 const DashboardIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -60,6 +62,19 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [user, setUser] = useState<UserProfile | null>(null);
+
+  useEffect(() => {
+    fetchCurrentUser()
+      .then(setUser)
+      .catch(() => router.push('/signin'));
+  }, [router]);
+
+  function handleSignOut() {
+    logout();
+    router.push('/signin');
+  }
 
   return (
     <div className="h-screen bg-cream flex overflow-hidden">
@@ -114,12 +129,19 @@ export default function DashboardLayout({
         {/* User */}
         <div className="px-4 py-6 border-t border-white/5">
           <div className="flex items-center gap-4 px-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-lavender to-dusty-rose rounded-xl flex items-center justify-center text-sm font-bold text-navy">
-              N
+            <div className="w-10 h-10 bg-gradient-to-br from-lavender to-dusty-rose rounded-xl flex items-center justify-center text-sm font-bold text-navy shrink-0">
+              {(user?.full_name ?? user?.email ?? '?').charAt(0).toUpperCase()}
             </div>
-            <div>
-              <p className="text-sm font-medium text-cream/90">Neha</p>
-              <p className="text-xs text-cream/40">Free Plan</p>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-cream/90 truncate">
+                {user?.full_name || user?.email || 'Loading…'}
+              </p>
+              <button
+                onClick={handleSignOut}
+                className="text-xs text-cream/40 hover:text-cream/70 transition-colors"
+              >
+                Sign out
+              </button>
             </div>
           </div>
         </div>
