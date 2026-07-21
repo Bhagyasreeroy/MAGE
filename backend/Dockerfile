@@ -23,6 +23,8 @@ RUN pip install --upgrade pip hatch && \
     pip install --no-cache-dir \
         fastapi \
         "uvicorn[standard]" \
+        pytest \
+        pytest-asyncio \
         python-multipart \
         pydantic \
         pydantic-settings \

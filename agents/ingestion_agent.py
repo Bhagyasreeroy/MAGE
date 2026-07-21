@@ -2,6 +2,11 @@
 agents/ingestion_agent.py
 ──────────────────────────
 IngestionAgent — tabular data ingestion, validation, and profiling.
+
+Accepts CSV, TSV, JSON, Parquet, and Excel (XLSX/XLS) sources, normalises
+them into a canonical Pandas DataFrame via DataIngestionEngine, and profiles
+the result into a structured IngestionResult (row/column counts, per-column
+stats, and data-quality warnings).
 """
 
 from __future__ import annotations
@@ -118,6 +123,15 @@ class IngestionAgent:
                 )
             )
 
+        n_dupes = int(df.duplicated().sum())
+        if n_dupes > 0:
+            warnings.append(f"Found {n_dupes} duplicate row(s).")
+
+        for col in df.columns:
+            non_null = df[col].dropna()
+            if len(non_null) > 0 and non_null.nunique() == 1:
+                warnings.append(f"Column '{col}' is constant (only one unique value).")
+
         return IngestionResult(
             row_count=row_count,
             column_count=column_count,
@@ -152,7 +166,7 @@ class IngestionAgent:
         ext = Path(filename).suffix.lower()
         headers = []
 
-        if ext == ".csv":
+        if ext in (".csv", ".tsv"):
             try:
                 text = content.decode("utf-8-sig")
             except UnicodeDecodeError as exc:
@@ -163,17 +177,20 @@ class IngestionAgent:
                 return
             first_line = lines[0]
 
-            try:
-                sniffer = csv.Sniffer()
-                dialect = sniffer.sniff(first_line, delimiters=[",", ";", "\t", "|"])
-                sep = dialect.delimiter
-            except csv.Error:
-                sep = ","
+            if ext == ".tsv":
+                sep = "\t"
+            else:
+                try:
+                    sniffer = csv.Sniffer()
+                    dialect = sniffer.sniff(first_line, delimiters=[",", ";", "\t", "|"])
+                    sep = dialect.delimiter
+                except csv.Error:
+                    sep = ","
 
             reader = csv.reader([first_line], delimiter=sep)
             headers = next(reader, [])
 
-        elif ext == ".xlsx":
+        elif ext in (".xlsx", ".xls"):
             try:
                 import openpyxl
 
