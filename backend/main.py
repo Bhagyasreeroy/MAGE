@@ -7,11 +7,24 @@ Registers routers, configures CORS middleware, and exposes the app
 object for uvicorn to serve.
 """
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.core.config import settings
-from backend.routers import health, analysis
+from backend.core.database import init_db
+from backend.routers import health, analysis, auth
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Run startup / shutdown tasks."""
+    # Import models so Base.metadata knows about all tables
+    import backend.models  # noqa: F401
+    await init_db()
+    yield
+
 
 app = FastAPI(
     title=settings.app_name,
@@ -23,6 +36,7 @@ app = FastAPI(
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
@@ -37,6 +51,7 @@ app.add_middleware(
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(health.router, tags=["Health"])
 app.include_router(analysis.router, prefix="/analysis", tags=["Analysis"])
+app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 
 
 if __name__ == "__main__":
