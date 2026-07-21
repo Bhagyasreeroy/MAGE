@@ -142,21 +142,22 @@ class OrchestratorAgent:
         steps: list[dict[str, Any]],
         context: dict[str, Any],
     ) -> dict[str, Any]:
-        """
-        Combine specialist agent outputs into a unified pipeline result.
+        """Combine specialist agent outputs into a unified pipeline result."""
+        recommendation_output = context.get("RecommendationAgent_output") or {}
+        structured_recs = recommendation_output.get("recommendations", [])
 
-        TODO: Replace dummy placeholders with real aggregation logic.
-        """
+        text_field = "text_plain" if expertise_level == "beginner" else "text_technical"
+        recommendations = [rec.get(text_field, rec.get("insight", "")) for rec in structured_recs]
+        rag_sources = recommendation_output.get("rag_sources", [])
+
         return {
             "goal": goal,
             "expertise_level": expertise_level,
             "steps": steps,
-            "recommendations": [
-                "[DUMMY] Recommendation 1 — placeholder until RAG is wired.",
-                "[DUMMY] Recommendation 2 — placeholder until RAG is wired.",
-            ],
-            "rag_sources": ["[DUMMY] knowledge_base/eda_best_practices.md"],
+            "recommendations": recommendations,
+            "rag_sources": rag_sources,
             "summary": (
-                f"[DUMMY] Analysis of goal '{goal}' completed in {len(steps)} steps."
+                f"Analysis of goal '{goal}' completed in {len(steps)} step(s), "
+                f"grounding {len(recommendations)} recommendation(s) in {len(rag_sources)} source(s)."
             ),
         }
