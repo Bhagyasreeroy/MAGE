@@ -49,6 +49,15 @@ def _parse_frontmatter(raw: str) -> tuple[dict[str, str], str]:
     return metadata, body
 
 
+def _is_markdown_table(paragraph: str) -> bool:
+    """True if most non-blank lines in the paragraph look like a table row."""
+    lines = [line for line in paragraph.splitlines() if line.strip()]
+    if not lines:
+        return False
+    table_lines = sum(1 for line in lines if line.strip().startswith("|"))
+    return table_lines / len(lines) >= 0.6
+
+
 def _split_text(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
     """
     Split text into overlapping chunks, preferring paragraph boundaries
@@ -66,26 +75,35 @@ def _split_text(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
             chunks.append(current.strip())
         current = ""
 
+    def seed_overlap() -> None:
+        """Flush `current`, seeding the next chunk with a word-aligned tail
+        for context continuity — unless `current` is a table, since a
+        trailing slice of a table is not useful leading context."""
+        nonlocal current
+        tail = ""
+        if current and chunk_overlap and not _is_markdown_table(current):
+            tail = current[-chunk_overlap:]
+            first_space = tail.find(" ")
+            tail = tail[first_space + 1 :] if first_space != -1 else ""
+        flush()
+        current = tail
+
     for paragraph in paragraphs:
+        # Tables are never merged with unrelated preceding prose, and never
+        # split mid-row — both produce nonsensical fragments out of context.
+        if _is_markdown_table(paragraph):
+            if current:
+                seed_overlap()
+            current = f"{current}\n\n{paragraph}".strip() if current else paragraph
+            continue
+
         candidate = f"{current}\n\n{paragraph}".strip() if current else paragraph
 
         if len(candidate) <= chunk_size:
             current = candidate
             continue
 
-        # Current buffer is full — flush it, and if the overlap tail is
-        # useful, seed the next chunk with it for context continuity.
-        if current:
-            tail = current[-chunk_overlap:] if chunk_overlap else ""
-            # Trim to the next word boundary so the overlap never starts
-            # mid-word (a raw character slice can land inside a token).
-            first_space = tail.find(" ")
-            if first_space != -1:
-                tail = tail[first_space + 1 :]
-            else:
-                tail = ""
-            flush()
-            current = tail
+        seed_overlap()
 
         if len(paragraph) <= chunk_size:
             current = f"{current}\n\n{paragraph}".strip() if current else paragraph

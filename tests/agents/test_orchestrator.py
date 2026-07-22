@@ -71,15 +71,22 @@ class TestOrchestratorAgent:
     def test_different_goals_produce_different_mining_directives(
         self, orchestrator: OrchestratorAgent
     ) -> None:
-        """The FR-02 core claim, at the orchestrator level."""
+        """The FR-02 core claim, at the orchestrator level.
+
+        The mining agent now runs real computations, so the goal-conditioning
+        is observable in the planner's per-task rationale carried on the mining
+        step (which names the task-specific computations) and in the inferred
+        task_type — not in a stub echo of the directives.
+        """
         anomaly = orchestrator.run(goal="Detect outliers in the readings")
         cluster = orchestrator.run(goal="Segment customers into cohorts")
 
-        def mining_comps(result):
+        def mining_reasoning(result):
             step = next(s for s in result["steps"] if s["agent_name"] == MINING)
-            return step["output"].get("planned_computations")
+            return step["reasoning"]
 
-        assert mining_comps(anomaly) != mining_comps(cluster)
+        assert anomaly["task_type"] != cluster["task_type"]
+        assert mining_reasoning(anomaly) != mining_reasoning(cluster)
 
     def test_never_exceeds_step_cap(self, orchestrator: OrchestratorAgent) -> None:
         result = orchestrator.run(goal="Profile customer data")
