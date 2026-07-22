@@ -86,6 +86,63 @@ class RefreshRequest(BaseModel):
     refresh_token: str = Field(..., description="Valid refresh token.")
 
 
+class UpdateProfileRequest(BaseModel):
+    """Payload for updating the current user's profile. All fields optional —
+    only provided fields are changed."""
+
+    full_name: str | None = Field(
+        default=None,
+        min_length=2,
+        max_length=200,
+        description="New full name.",
+    )
+    email: EmailStr | None = Field(
+        default=None,
+        description="New email address.",
+    )
+    default_expertise_level: str | None = Field(
+        default=None,
+        description="Default expertise level for new analyses.",
+    )
+
+    @field_validator("full_name")
+    @classmethod
+    def sanitize_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        if "<" in v or ">" in v:
+            raise ValueError("Name contains invalid characters.")
+        return v
+
+    @field_validator("default_expertise_level")
+    @classmethod
+    def validate_expertise_level(cls, v: str | None) -> str | None:
+        if v is not None and v not in ("beginner", "intermediate", "expert"):
+            raise ValueError("default_expertise_level must be one of: beginner, intermediate, expert.")
+        return v
+
+
+class ChangePasswordRequest(BaseModel):
+    """Payload for changing the current user's password."""
+
+    current_password: str = Field(..., min_length=1, description="Current password, for verification.")
+    new_password: str = Field(..., min_length=8, max_length=128, description="New password.")
+
+    @field_validator("new_password")
+    @classmethod
+    def password_complexity(cls, v: str) -> str:
+        if not re.search(r"[A-Z]", v):
+            raise ValueError("Password must contain at least one uppercase letter.")
+        if not re.search(r"[a-z]", v):
+            raise ValueError("Password must contain at least one lowercase letter.")
+        if not re.search(r"\d", v):
+            raise ValueError("Password must contain at least one digit.")
+        if not re.search(r"[!@#$%^&*()_+\-=\[\]{};':\"\\|,.<>\/?]", v):
+            raise ValueError("Password must contain at least one special character.")
+        return v
+
+
 # ── Response models ───────────────────────────────────────────────────────────
 
 class TokenResponse(BaseModel):
@@ -106,6 +163,7 @@ class UserResponse(BaseModel):
     email: str
     full_name: str
     is_active: bool
+    default_expertise_level: str
     created_at: datetime
 
 

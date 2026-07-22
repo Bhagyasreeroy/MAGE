@@ -32,17 +32,30 @@ from backend.core.security import (
 from backend.core.config import settings
 from backend.models.user import User
 from backend.schemas.auth import (
+    ChangePasswordRequest,
     LoginRequest,
     MessageResponse,
     RefreshRequest,
     RegisterRequest,
     TokenResponse,
+    UpdateProfileRequest,
     UserResponse,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _to_user_response(user: User) -> UserResponse:
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        is_active=user.is_active,
+        default_expertise_level=user.default_expertise_level,
+        created_at=user.created_at,
+    )
 
 
 # ── POST /auth/register ──────────────────────────────────────────────────────
@@ -83,13 +96,7 @@ async def register(
 
     logger.info("New user registered: %s", user.email)
 
-    return UserResponse(
-        id=user.id,
-        email=user.email,
-        full_name=user.full_name,
-        is_active=user.is_active,
-        created_at=user.created_at,
-    )
+    return _to_user_response(user)
 
 
 # ── POST /auth/login ─────────────────────────────────────────────────────────
@@ -193,10 +200,86 @@ async def get_me(
     current_user: User = Depends(get_current_user),
 ) -> UserResponse:
     """Return the profile of the currently authenticated user."""
-    return UserResponse(
-        id=current_user.id,
-        email=current_user.email,
-        full_name=current_user.full_name,
-        is_active=current_user.is_active,
-        created_at=current_user.created_at,
-    )
+    return _to_user_response(current_user)
+
+
+# ── PATCH /auth/me ───────────────────────────────────────────────────────────
+
+@router.patch(
+    "/me",
+    response_model=UserResponse,
+    summary="Update the current user's profile",
+)
+async def update_me(
+    body: UpdateProfileRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserResponse:
+    """Update full_name / email / default_expertise_level. Only provided
+    fields are changed."""
+    if body.email is not None and body.email != current_user.email:
+        result = await db.execute(select(User).where(User.email == body.email))
+        if result.scalar_one_or_none() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An account with this email already exists.",
+            )
+        current_user.email = body.email
+
+    if body.full_name is not None:
+        current_user.full_name = body.full_name
+    if body.default_expertise_level is not None:
+        current_user.default_expertise_level = body.default_expertise_level
+
+    await db.commit()
+    await db.refresh(current_user)
+
+    logger.info("User updated profile: %s", current_user.email)
+    return _to_user_response(current_user)
+
+
+# ── POST /auth/change-password ───────────────────────────────────────────────
+
+@router.post(
+    "/change-password",
+    response_model=MessageResponse,
+    summary="Change the current user's password",
+)
+async def change_password(
+    body: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Verify the current password, then set the new one."""
+    if not verify_password(body.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Current password is incorrect.",
+        )
+
+    current_user.hashed_password = hash_password(body.new_password)
+    await db.commit()
+
+    logger.info("User changed password: %s", current_user.email)
+    return MessageResponse(message="Password updated successfully.")
+
+
+# ── DELETE /auth/me ───────────────────────────────────────────────────────────
+
+@router.delete(
+    "/me",
+    response_model=MessageResponse,
+    summary="Permanently delete the current user's account",
+)
+async def delete_me(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Permanently delete the account and all owned datasets/analysis runs
+    (cascades via the foreign key ON DELETE CASCADE)."""
+    email = current_user.email
+    await db.delete(current_user)
+    await db.commit()
+
+    logger.info("User deleted account: %s", email)
+    return MessageResponse(message="Account deleted.")

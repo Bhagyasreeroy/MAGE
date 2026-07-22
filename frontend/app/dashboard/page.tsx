@@ -2,32 +2,13 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { fetchCurrentUser, type UserProfile } from '../lib/api';
-
-interface RecentAnalysis {
-  id: string;
-  goal: string;
-}
-
-// Analysis runs aren't persisted server-side yet — we only know about
-// results from this browser session (see sessionStorage in the New
-// Analysis / results pages), so "recent" here means "this session," not
-// a real history. No fabricated data is shown if the list is empty.
-function readRecentAnalysesFromSession(): RecentAnalysis[] {
-  if (typeof window === 'undefined') return [];
-  const results: RecentAnalysis[] = [];
-  for (let i = 0; i < sessionStorage.length; i++) {
-    const key = sessionStorage.key(i);
-    if (!key?.startsWith('mage-analysis-')) continue;
-    try {
-      const data = JSON.parse(sessionStorage.getItem(key) ?? '{}');
-      results.push({ id: key.replace('mage-analysis-', ''), goal: data.goal ?? 'Untitled analysis' });
-    } catch {
-      // skip malformed entries
-    }
-  }
-  return results;
-}
+import {
+  fetchAnalysisHistory,
+  fetchCurrentUser,
+  fetchDatasets,
+  type AnalysisRunSummary,
+  type UserProfile,
+} from '../lib/api';
 
 const ChartIcon = () => (
   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -67,12 +48,19 @@ const UploadIcon = () => (
 
 export default function DashboardPage() {
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [recentAnalyses, setRecentAnalyses] = useState<RecentAnalysis[]>([]);
+  const [allRuns, setAllRuns] = useState<AnalysisRunSummary[]>([]);
+  const [datasetCount, setDatasetCount] = useState<number | null>(null);
 
   useEffect(() => {
     fetchCurrentUser().then(setUser).catch(() => {});
-    setRecentAnalyses(readRecentAnalysesFromSession());
+    fetchAnalysisHistory().then(setAllRuns).catch(() => {});
+    fetchDatasets()
+      .then((datasets) => setDatasetCount(datasets.length))
+      .catch(() => {});
   }, []);
+
+  const recentAnalyses = allRuns.slice(0, 5);
+  const successfulRunCount = allRuns.filter((r) => r.status === 'success').length;
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -89,9 +77,9 @@ export default function DashboardPage() {
       {/* ── Stat Cards ─────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
         {[
-          { label: 'Analyses This Session', value: String(recentAnalyses.length), icon: <ChartIcon /> },
-          { label: 'Datasets', icon: <FolderIcon />, value: '—' },
-          { label: 'Recommendations', icon: <LightbulbIcon />, value: '—' },
+          { label: 'Total Analyses', value: String(allRuns.length), icon: <ChartIcon /> },
+          { label: 'Datasets', icon: <FolderIcon />, value: datasetCount === null ? '—' : String(datasetCount) },
+          { label: 'Successful Runs', icon: <LightbulbIcon />, value: String(successfulRunCount) },
         ].map((stat, idx) => (
           <div
             key={stat.label}
@@ -155,7 +143,7 @@ export default function DashboardPage() {
         {recentAnalyses.length === 0 ? (
           <div className="bg-warm-white/60 border border-dashed border-dusty-rose/30 rounded-3xl p-10 text-center">
             <p className="text-navy/50 font-light mb-4">
-              No analyses yet this session. Run one to see it here.
+              No analyses yet. Run one to see it here.
             </p>
             <Link
               href="/dashboard/analysis/new"

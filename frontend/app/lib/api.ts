@@ -69,6 +69,42 @@ export async function apiFetch<T = unknown>(
     ...(extraHeaders as Record<string, string>),
   };
 
+  const response = await fetchWithAuthRetry(path, headers, auth, rest);
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(parseApiError(body, response.status));
+  }
+
+  return response.json() as Promise<T>;
+}
+
+/**
+ * Like apiFetch, but for multipart/form-data bodies (file uploads) — never
+ * sets Content-Type itself, since the browser must set it (with the
+ * multipart boundary) when the body is a FormData instance. Always attaches
+ * the auth token, since every multipart endpoint in this app requires it.
+ */
+export async function authFetchFormData<T = unknown>(
+  path: string,
+  formData: FormData,
+): Promise<T> {
+  const response = await fetchWithAuthRetry(path, {}, true, { method: "POST", body: formData });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(parseApiError(body, response.status));
+  }
+
+  return response.json() as Promise<T>;
+}
+
+async function fetchWithAuthRetry(
+  path: string,
+  headers: Record<string, string>,
+  auth: boolean,
+  rest: RequestInit,
+): Promise<Response> {
   if (auth) {
     const token = getAccessToken();
     if (token) {
@@ -87,12 +123,7 @@ export async function apiFetch<T = unknown>(
     }
   }
 
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(parseApiError(body, response.status));
-  }
-
-  return response.json() as Promise<T>;
+  return response;
 }
 
 // ── Token refresh ────────────────────────────────────────────────────────────
@@ -147,6 +178,31 @@ export interface UserProfile {
   email: string;
   full_name: string;
   is_active: boolean;
+  default_expertise_level: string;
+  created_at: string;
+}
+
+export interface UpdateProfilePayload {
+  full_name?: string;
+  email?: string;
+  default_expertise_level?: string;
+}
+
+export interface AnalysisRunSummary {
+  id: string;
+  goal: string;
+  expertise_level: string;
+  status: string;
+  summary: string;
+  dataset_id: string | null;
+  created_at: string;
+}
+
+export interface DatasetSummary {
+  id: string;
+  filename: string;
+  row_count: number | null;
+  column_count: number | null;
   created_at: string;
 }
 
@@ -174,6 +230,44 @@ export async function fetchCurrentUser(): Promise<UserProfile> {
   return apiFetch<UserProfile>("/auth/me", { auth: true });
 }
 
+export async function updateProfile(payload: UpdateProfilePayload): Promise<UserProfile> {
+  return apiFetch<UserProfile>("/auth/me", {
+    method: "PATCH",
+    auth: true,
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  await apiFetch("/auth/change-password", {
+    method: "POST",
+    auth: true,
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+}
+
+export async function deleteAccount(): Promise<void> {
+  await apiFetch("/auth/me", { method: "DELETE", auth: true });
+}
+
 export function logout(): void {
   clearTokens();
+}
+
+// ── Analysis history / datasets ─────────────────────────────────────────────
+
+export async function fetchAnalysisHistory(): Promise<AnalysisRunSummary[]> {
+  return apiFetch<AnalysisRunSummary[]>("/analysis/history", { auth: true });
+}
+
+export async function fetchAnalysisRun(runId: string): Promise<unknown> {
+  return apiFetch(`/analysis/history/${runId}`, { auth: true });
+}
+
+export async function fetchDatasets(): Promise<DatasetSummary[]> {
+  return apiFetch<DatasetSummary[]>("/analysis/datasets", { auth: true });
+}
+
+export async function deleteDataset(datasetId: string): Promise<void> {
+  await apiFetch(`/analysis/datasets/${datasetId}`, { method: "DELETE", auth: true });
 }

@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
 
     # ── Database ───────────────────────────────────────────────────────────
-    database_url: str = "sqlite+aiosqlite:///./mage.db"
+    database_url: str = "postgresql+asyncpg://mage:mage@localhost:5432/mage"
 
 
 # Singleton instance — import this everywhere instead of re-instantiating.

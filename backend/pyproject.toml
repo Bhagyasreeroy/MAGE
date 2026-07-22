@@ -44,8 +44,9 @@ dependencies = [
     "python-jose[cryptography]>=3.3.0",
     "pydantic[email]>=2.7.0",
 
-    # ── Database (async SQLite for dev, swap to asyncpg for prod) ──────
+    # ── Database (Postgres primary; sqlite kept for dependency-free tests) ──
     "sqlalchemy[asyncio]>=2.0.30",
+    "asyncpg>=0.29.0",
     "aiosqlite>=0.20.0",
 ]
 
