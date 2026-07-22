@@ -128,4 +128,4 @@ async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
     # ── Step 4: Issue MAGE JWT and redirect ───────────────────────────────
     mage_token = create_access_token(subject=user.id)
     frontend_url = settings.frontend_url
-    return RedirectResponse(url=f"{frontend_url}/dashboard?token={mage_token}")
+    return RedirectResponse(url=f"{frontend_url}/auth-callback?token={mage_token}")
