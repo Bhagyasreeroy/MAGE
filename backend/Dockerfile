@@ -74,7 +74,9 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
 
+# Note: curl is installed in the builder stage only, so the healthcheck uses
+# python (always present here) rather than shelling out to curl.
 HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)" || exit 1
 
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
