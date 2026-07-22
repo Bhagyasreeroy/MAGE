@@ -66,6 +66,13 @@ _KEYWORDS: dict[TaskType, list[tuple[str, float]]] = {
         ("propensity", 2.0), ("likelihood", 2.0), ("probability of", 2.0), ("label", 1.5),
         ("category", 1.5), ("will they", 1.5), ("predict whether", 2.5), ("spam", 2.0),
         ("convert", 1.5), ("default", 1.5),
+        # Binary-contrast / discriminative phrasings that carry no explicit
+        # classification keyword. Kept to phrases that don't collide with a
+        # clustering goal like "separate customers into groups" (bare "separate"
+        # is deliberately excluded for that reason).
+        ("distinguish", 2.5), ("differentiate", 2.5), ("tell apart", 2.0),
+        ("high vs low", 2.5), ("high versus low", 2.5), ("separate high", 2.0),
+        ("what separates", 2.0), ("which factors separate", 2.5),
     ],
     TaskType.reporting: [
         ("describe", 2.0), ("summarize", 2.0), ("summary", 2.0), ("overview", 2.0),
@@ -79,6 +86,8 @@ _PROTOTYPES: dict[TaskType, list[str]] = {
     TaskType.classification: [
         "predict a categorical label or class for each record",
         "classify records into discrete categories such as churn yes or no",
+        "identify which features distinguish or separate one group from another, "
+        "such as high value versus low value",
     ],
     TaskType.regression: [
         "predict or forecast a continuous numeric value",
