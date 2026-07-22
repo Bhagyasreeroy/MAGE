@@ -37,6 +37,11 @@ class TestGoalClassifier:
         [
             ("Predict which customers will churn next quarter", TaskType.classification),
             ("Classify transactions as spam or not", TaskType.classification),
+            # Discriminative / binary-contrast goals that carry no explicit
+            # classification keyword — these previously fell through to reporting.
+            ("Which factors best separate high vs low value orders", TaskType.classification),
+            ("Distinguish fraudulent orders from legitimate ones", TaskType.classification),
+            ("Tell apart the customers who differentiate into two tiers", TaskType.classification),
             ("Forecast monthly revenue for the next year", TaskType.regression),
             ("Estimate how much each order will be worth", TaskType.regression),
             ("Segment our customers into distinct groups", TaskType.clustering),
@@ -53,6 +58,15 @@ class TestGoalClassifier:
         assert isinstance(result, GoalClassification)
         assert result.task_type == expected
         assert 0.0 <= result.confidence <= 1.0
+
+    def test_bare_separate_into_groups_is_not_classification(
+        self, classifier: GoalClassifier
+    ) -> None:
+        # The discriminative keywords must not hijack a clustering-style goal:
+        # "separate ... into groups" is clustering, so bare "separate" is
+        # deliberately excluded from the classification lexicon.
+        result = classifier.classify("Separate the customers into groups")
+        assert result.task_type != TaskType.classification
 
     def test_empty_goal_falls_back_to_reporting(self, classifier: GoalClassifier) -> None:
         result = classifier.classify("")
