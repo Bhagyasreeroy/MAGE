@@ -1,8 +1,8 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useRef, useState } from 'react';
-import { parseApiError } from '../../../lib/api';
+import { useEffect, useRef, useState } from 'react';
+import { authFetchFormData, fetchCurrentUser } from '../../../lib/api';
 
 type ExpertiseLevel = 'beginner' | 'intermediate' | 'expert';
 
@@ -40,7 +40,15 @@ export default function NewAnalysisPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+  useEffect(() => {
+    fetchCurrentUser()
+      .then((user) => {
+        if (user.default_expertise_level) {
+          setExpertiseLevel(user.default_expertise_level as ExpertiseLevel);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -57,20 +65,8 @@ export default function NewAnalysisPage() {
         formData.append('file', file);
       }
 
-      const res = await fetch(`${apiUrl}/analysis/run`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        throw new Error(parseApiError(errBody, res.status));
-      }
-
-      const data = await res.json();
-      const id = crypto.randomUUID();
-      sessionStorage.setItem(`mage-analysis-${id}`, JSON.stringify(data));
-      router.push(`/dashboard/analysis/${id}`);
+      const data = await authFetchFormData<{ run_id: string }>('/analysis/run', formData);
+      router.push(`/dashboard/analysis/${data.run_id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
     } finally {

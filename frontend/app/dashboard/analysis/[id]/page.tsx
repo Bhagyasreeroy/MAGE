@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { parseApiError } from '../../../lib/api';
+import { authFetchFormData, fetchAnalysisRun } from '../../../lib/api';
 import { BarChart, BoxPlot, ClusterScatter, CorrelationHeatmap, Histogram } from '../../../components/charts';
 
 interface StepResult {
@@ -19,7 +19,8 @@ interface AnalysisResult {
   recommendations: string[];
   rag_sources: string[];
   summary: string;
-  analysis_id?: string | null;
+  dataset_id?: string | null;
+  run_id?: string | null;
 }
 
 interface DataQualityRow {
@@ -89,11 +90,18 @@ export default function AnalysisResultPage() {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
-
   useEffect(() => {
-    const stored = sessionStorage.getItem(`mage-analysis-${params.id}`);
-    setResult(stored ? JSON.parse(stored) : null);
+    let cancelled = false;
+    fetchAnalysisRun(params.id)
+      .then((data) => {
+        if (!cancelled) setResult(data as AnalysisResult);
+      })
+      .catch(() => {
+        if (!cancelled) setResult(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [params.id]);
 
   if (result === undefined) {
@@ -107,8 +115,8 @@ export default function AnalysisResultPage() {
           No analysis found
         </h1>
         <p className="text-navy/50 font-light mb-8">
-          This result isn&apos;t in your current browser session — it may have expired,
-          or this link was opened in a different tab. Start a new analysis to continue.
+          This analysis doesn&apos;t exist, isn&apos;t yours, or the link is wrong.
+          Start a new analysis to continue.
         </p>
         <Link
           href="/dashboard/analysis/new"
@@ -133,23 +141,17 @@ export default function AnalysisResultPage() {
       const formData = new FormData();
       formData.append('goal', goal);
       formData.append('expertise_level', result.expertise_level);
-      if (result.analysis_id) {
+      if (result.dataset_id) {
         // Re-references the same uploaded dataset server-side — no
         // re-upload needed, and the full pipeline (real stats + RAG)
         // re-runs against it for this new goal.
-        formData.append('analysis_id', result.analysis_id);
+        formData.append('dataset_id', result.dataset_id);
       }
 
-      const res = await fetch(`${apiUrl}/analysis/run`, { method: 'POST', body: formData });
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        throw new Error(parseApiError(errBody, res.status));
-      }
-
-      const data: AnalysisResult = await res.json();
-      // Keep analysis_id current in case the backend rotated/re-issued it.
-      if (data.analysis_id) {
-        setResult((prev) => (prev ? { ...prev, analysis_id: data.analysis_id } : prev));
+      const data = await authFetchFormData<AnalysisResult>('/analysis/run', formData);
+      // Keep dataset_id current in case the backend rotated/re-issued it.
+      if (data.dataset_id) {
+        setResult((prev) => (prev ? { ...prev, dataset_id: data.dataset_id } : prev));
       }
       const reply =
         data.recommendations.length > 0
@@ -340,7 +342,7 @@ export default function AnalysisResultPage() {
       <div className="space-y-6 animate-slide-up delay-200">
         {chatHistory.length === 0 && (
           <p className="text-navy/40 font-light text-sm text-center">
-            {result.analysis_id
+            {result.dataset_id
               ? 'Ask a follow-up — it re-runs the full pipeline against the same dataset, goal-conditioned on your new question.'
               : 'Ask a follow-up — it re-runs the pipeline goal-conditioned on your new question (no dataset was uploaded for this run).'}
           </p>

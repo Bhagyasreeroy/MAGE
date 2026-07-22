@@ -12,6 +12,7 @@ Models:
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -95,6 +96,10 @@ class IngestionResult(BaseModel):
         default_factory=list,
         description="Non-fatal ingestion/profile warnings.",
     )
+    dataset_id: str | None = Field(
+        default=None,
+        description="Id of the persisted dataset, for reuse in a later /analysis/run call.",
+    )
 
 
 class KnowledgeSource(BaseModel):
@@ -127,11 +132,37 @@ class AnalysisResponse(BaseModel):
         default="",
         description="High-level summary of the analysis.",
     )
-    analysis_id: str | None = Field(
+    dataset_id: str | None = Field(
         default=None,
         description=(
-            "Id referencing the uploaded dataset for this session. Pass it back "
-            "on a follow-up /analysis/run call (instead of re-uploading a file) "
-            "to keep querying the same dataset."
+            "Id referencing the persisted, uploaded dataset. Pass it back on a "
+            "follow-up /analysis/run call (instead of re-uploading a file) to "
+            "keep querying the same dataset."
         ),
     )
+    run_id: str | None = Field(
+        default=None,
+        description="Id of the persisted analysis run, for GET /analysis/history/{run_id}.",
+    )
+
+
+class AnalysisRunSummary(BaseModel):
+    """A lightweight entry in a user's analysis history list."""
+
+    id: str
+    goal: str
+    expertise_level: ExpertiseLevel
+    status: str
+    summary: str
+    dataset_id: str | None
+    created_at: datetime
+
+
+class DatasetSummary(BaseModel):
+    """A lightweight entry in a user's dataset list."""
+
+    id: str
+    filename: str
+    row_count: int | None
+    column_count: int | None
+    created_at: datetime

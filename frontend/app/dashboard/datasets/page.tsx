@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useRef, useState } from 'react';
-import { parseApiError } from '../../lib/api';
+import { useEffect, useRef, useState } from 'react';
+import { authFetchFormData, deleteDataset, fetchDatasets, type DatasetSummary } from '../../lib/api';
 
 const FileIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -35,24 +35,45 @@ interface IngestionResult {
   column_count: number;
   column_summary: ColumnSummary[];
   warnings: string[];
+  dataset_id: string | null;
 }
 
-interface UploadedDataset {
+interface DatasetEntry {
   id: string;
   name: string;
-  size: string;
-  result: IngestionResult;
+  rowCount: number | null;
+  columnCount: number | null;
+  columnSummary: ColumnSummary[] | null;
+  warnings: string[];
   expanded: boolean;
 }
 
 export default function DatasetsPage() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isLoadingList, setIsLoadingList] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [datasets, setDatasets] = useState<UploadedDataset[]>([]);
+  const [datasets, setDatasets] = useState<DatasetEntry[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+  useEffect(() => {
+    fetchDatasets()
+      .then((list: DatasetSummary[]) => {
+        setDatasets(
+          list.map((d) => ({
+            id: d.id,
+            name: d.filename,
+            rowCount: d.row_count,
+            columnCount: d.column_count,
+            columnSummary: null,
+            warnings: [],
+            expanded: false,
+          })),
+        );
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load datasets'))
+      .finally(() => setIsLoadingList(false));
+  }, []);
 
   async function ingestFile(file: File) {
     setIsUploading(true);
@@ -61,23 +82,15 @@ export default function DatasetsPage() {
       const formData = new FormData();
       formData.append('file', file);
 
-      const res = await fetch(`${apiUrl}/analysis/ingest`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        throw new Error(parseApiError(errBody, res.status));
-      }
-
-      const result: IngestionResult = await res.json();
+      const result = await authFetchFormData<IngestionResult>('/analysis/ingest', formData);
       setDatasets((prev) => [
         {
-          id: crypto.randomUUID(),
+          id: result.dataset_id ?? crypto.randomUUID(),
           name: file.name,
-          size: `${(file.size / 1024).toFixed(1)} KB`,
-          result,
+          rowCount: result.row_count,
+          columnCount: result.column_count,
+          columnSummary: result.column_summary,
+          warnings: result.warnings,
           expanded: false,
         },
         ...prev,
@@ -100,8 +113,15 @@ export default function DatasetsPage() {
     setDatasets((prev) => prev.map((d) => (d.id === id ? { ...d, expanded: !d.expanded } : d)));
   }
 
-  function removeDataset(id: string) {
+  async function removeDataset(id: string) {
+    const previous = datasets;
     setDatasets((prev) => prev.filter((d) => d.id !== id));
+    try {
+      await deleteDataset(id);
+    } catch (err) {
+      setDatasets(previous);
+      setError(err instanceof Error ? err.message : 'Failed to delete dataset');
+    }
   }
 
   return (
@@ -113,8 +133,7 @@ export default function DatasetsPage() {
             Datasets
           </h1>
           <p className="text-navy/50 font-light text-lg">
-            Upload a file to profile it. Datasets aren&apos;t stored between sessions yet —
-            upload again here whenever you want to inspect a file.
+            Every file you upload is saved to your account — visible here on any device you sign into.
           </p>
         </div>
       </div>
@@ -170,10 +189,12 @@ export default function DatasetsPage() {
       {/* ── Dataset List ───────────────────────────────────────────── */}
       <div className="animate-slide-up delay-200">
         <h2 className="text-xs font-bold text-navy/40 uppercase tracking-widest mb-5 px-2">
-          Profiled This Session ({datasets.length})
+          Your Datasets ({datasets.length})
         </h2>
 
-        {datasets.length === 0 ? (
+        {isLoadingList ? (
+          <p className="text-navy/40 font-light px-2">Loading…</p>
+        ) : datasets.length === 0 ? (
           <p className="text-navy/40 font-light px-2">Nothing uploaded yet.</p>
         ) : (
           <div className="space-y-5">
@@ -190,11 +211,11 @@ export default function DatasetsPage() {
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-navy text-base truncate mb-2">{ds.name}</p>
                     <span className="text-xs text-navy/40 font-light">
-                      {ds.result.row_count.toLocaleString()} rows · {ds.result.column_count} cols · {ds.size}
+                      {ds.rowCount?.toLocaleString() ?? '?'} rows · {ds.columnCount ?? '?'} cols
                     </span>
-                    {ds.result.warnings.length > 0 && (
+                    {ds.warnings.length > 0 && (
                       <p className="text-xs text-peach mt-2 font-medium">
-                        {ds.result.warnings.length} data-quality warning(s)
+                        {ds.warnings.length} data-quality warning(s)
                       </p>
                     )}
                   </div>
@@ -202,18 +223,24 @@ export default function DatasetsPage() {
 
                 {ds.expanded && (
                   <div className="mt-5 pt-5 border-t border-dusty-rose/15 space-y-3">
-                    {ds.result.warnings.map((w, i) => (
+                    {ds.warnings.map((w, i) => (
                       <p key={i} className="text-xs text-navy/60">⚠ {w}</p>
                     ))}
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                      {ds.result.column_summary.map((col) => (
-                        <div key={col.name} className="bg-cream/50 rounded-xl p-3">
-                          <p className="text-xs font-bold text-navy truncate">{col.name}</p>
-                          <p className="text-[10px] text-navy/40 uppercase tracking-wide">{col.dtype}</p>
-                          <p className="text-[10px] text-navy/40 mt-1">{col.missing_count} missing</p>
-                        </div>
-                      ))}
-                    </div>
+                    {ds.columnSummary ? (
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                        {ds.columnSummary.map((col) => (
+                          <div key={col.name} className="bg-cream/50 rounded-xl p-3">
+                            <p className="text-xs font-bold text-navy truncate">{col.name}</p>
+                            <p className="text-[10px] text-navy/40 uppercase tracking-wide">{col.dtype}</p>
+                            <p className="text-[10px] text-navy/40 mt-1">{col.missing_count} missing</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-navy/40">
+                        Column-level detail is only shown right after upload — re-upload this file to see it again.
+                      </p>
+                    )}
                   </div>
                 )}
 

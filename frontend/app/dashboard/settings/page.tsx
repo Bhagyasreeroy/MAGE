@@ -1,6 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import {
+  changePassword,
+  deleteAccount,
+  fetchCurrentUser,
+  logout,
+  updateProfile,
+  type UserProfile,
+} from '../../lib/api';
 
 const CheckIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -8,17 +17,103 @@ const CheckIcon = () => (
   </svg>
 );
 
-export default function SettingsPage() {
-  const [name, setName] = useState('Neha');
-  const [email, setEmail] = useState('neha@example.com');
-  const [openaiKey, setOpenaiKey] = useState('');
-  const [defaultExpertise, setDefaultExpertise] = useState('intermediate');
-  const [saved, setSaved] = useState(false);
+type ExpertiseLevel = 'beginner' | 'intermediate' | 'expert';
 
-  function handleSave(e: React.FormEvent) {
+export default function SettingsPage() {
+  const router = useRouter();
+
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [defaultExpertise, setDefaultExpertise] = useState<ExpertiseLevel>('intermediate');
+
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSaved, setProfileSaved] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordSaved, setPasswordSaved] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchCurrentUser()
+      .then((u) => {
+        setUser(u);
+        setName(u.full_name);
+        setEmail(u.email);
+        setDefaultExpertise((u.default_expertise_level as ExpertiseLevel) || 'intermediate');
+      })
+      .catch(() => router.push('/signin'));
+  }, [router]);
+
+  async function handleSaveProfile(e: React.FormEvent) {
     e.preventDefault();
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setProfileSaving(true);
+    setProfileError(null);
+    setProfileSaved(false);
+    try {
+      const updated = await updateProfile({
+        full_name: name,
+        email,
+        default_expertise_level: defaultExpertise,
+      });
+      setUser(updated);
+      setProfileSaved(true);
+      setTimeout(() => setProfileSaved(false), 2000);
+    } catch (err) {
+      setProfileError(err instanceof Error ? err.message : 'Failed to save changes');
+    } finally {
+      setProfileSaving(false);
+    }
+  }
+
+  async function handleChangePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setPasswordError(null);
+    setPasswordSaved(false);
+
+    if (newPassword !== confirmPassword) {
+      setPasswordError('New passwords do not match.');
+      return;
+    }
+
+    setPasswordSaving(true);
+    try {
+      await changePassword(currentPassword, newPassword);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setPasswordSaved(true);
+      setTimeout(() => setPasswordSaved(false), 2000);
+    } catch (err) {
+      setPasswordError(err instanceof Error ? err.message : 'Failed to change password');
+    } finally {
+      setPasswordSaving(false);
+    }
+  }
+
+  async function handleDeleteAccount() {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteAccount();
+      logout();
+      router.push('/signin');
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete account');
+      setDeleting(false);
+    }
+  }
+
+  if (!user) {
+    return null;
   }
 
   return (
@@ -32,20 +127,20 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <form onSubmit={handleSave} className="space-y-8 animate-slide-up delay-100">
+      <div className="space-y-8 animate-slide-up delay-100">
         {/* ── Profile ──────────────────────────────────────────────── */}
-        <div className="bg-warm-white/80 backdrop-blur-sm border border-dusty-rose/20 rounded-[2rem] p-8">
+        <form onSubmit={handleSaveProfile} className="bg-warm-white/80 backdrop-blur-sm border border-dusty-rose/20 rounded-[2rem] p-8">
           <h2 className="font-[family-name:var(--font-serif)] text-xl font-bold text-navy mb-6">
             Profile
           </h2>
 
           <div className="flex items-center gap-6 mb-8">
             <div className="w-20 h-20 bg-gradient-to-br from-lavender to-dusty-rose rounded-2xl flex items-center justify-center text-3xl font-bold text-navy shadow-inner shadow-white/20">
-              {name.charAt(0)}
+              {(name || email).charAt(0).toUpperCase()}
             </div>
             <div>
-              <p className="font-bold text-lg text-navy">{name}</p>
-              <p className="text-sm text-navy/50 font-light">{email}</p>
+              <p className="font-bold text-lg text-navy">{user.full_name}</p>
+              <p className="text-sm text-navy/50 font-light">{user.email}</p>
             </div>
           </div>
 
@@ -59,6 +154,8 @@ export default function SettingsPage() {
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                minLength={2}
+                required
                 className="w-full bg-cream/50 border border-dusty-rose/20 rounded-2xl px-5 py-4 text-navy text-sm focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all"
               />
             </div>
@@ -71,85 +168,166 @@ export default function SettingsPage() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                required
+                className="w-full bg-cream/50 border border-dusty-rose/20 rounded-2xl px-5 py-4 text-navy text-sm focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all"
+              />
+            </div>
+            <div>
+              <label htmlFor="default-expertise" className="block text-xs font-bold text-navy/60 uppercase tracking-widest mb-3">
+                Default Expertise Level
+              </label>
+              <select
+                id="default-expertise"
+                value={defaultExpertise}
+                onChange={(e) => setDefaultExpertise(e.target.value as ExpertiseLevel)}
+                className="w-full bg-cream/50 border border-dusty-rose/20 rounded-2xl px-5 py-4 text-navy text-sm focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all appearance-none cursor-pointer"
+              >
+                <option value="beginner">Beginner</option>
+                <option value="intermediate">Intermediate</option>
+                <option value="expert">Expert</option>
+              </select>
+              <p className="text-xs text-navy/40 mt-2 font-light">
+                Pre-selected whenever you start a new analysis.
+              </p>
+            </div>
+          </div>
+
+          {profileError && (
+            <div className="mt-5 bg-dusty-rose/10 border border-dusty-rose/30 rounded-2xl p-4 text-dusty-rose text-sm">
+              {profileError}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={profileSaving}
+            className="w-full mt-6 bg-navy text-cream font-medium py-4 rounded-[2rem] hover:bg-navy-light transition-all hover:-translate-y-1 shadow-xl shadow-navy/15 flex items-center justify-center gap-3 text-base disabled:opacity-60"
+          >
+            {profileSaved ? (
+              <><CheckIcon /> Saved Successfully</>
+            ) : profileSaving ? (
+              'Saving…'
+            ) : (
+              'Save Changes'
+            )}
+          </button>
+        </form>
+
+        {/* ── Change Password ──────────────────────────────────────── */}
+        <form onSubmit={handleChangePassword} className="bg-warm-white/80 backdrop-blur-sm border border-dusty-rose/20 rounded-[2rem] p-8">
+          <h2 className="font-[family-name:var(--font-serif)] text-xl font-bold text-navy mb-6">
+            Change Password
+          </h2>
+
+          <div className="space-y-5">
+            <div>
+              <label htmlFor="current-password" className="block text-xs font-bold text-navy/60 uppercase tracking-widest mb-3">
+                Current Password
+              </label>
+              <input
+                id="current-password"
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                required
+                className="w-full bg-cream/50 border border-dusty-rose/20 rounded-2xl px-5 py-4 text-navy text-sm focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all"
+              />
+            </div>
+            <div>
+              <label htmlFor="new-password" className="block text-xs font-bold text-navy/60 uppercase tracking-widest mb-3">
+                New Password
+              </label>
+              <input
+                id="new-password"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                minLength={8}
+                required
+                className="w-full bg-cream/50 border border-dusty-rose/20 rounded-2xl px-5 py-4 text-navy text-sm focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all"
+              />
+            </div>
+            <div>
+              <label htmlFor="confirm-password" className="block text-xs font-bold text-navy/60 uppercase tracking-widest mb-3">
+                Confirm New Password
+              </label>
+              <input
+                id="confirm-password"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                minLength={8}
+                required
                 className="w-full bg-cream/50 border border-dusty-rose/20 rounded-2xl px-5 py-4 text-navy text-sm focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all"
               />
             </div>
           </div>
-        </div>
 
-        {/* ── API Keys ─────────────────────────────────────────────── */}
-        <div className="bg-warm-white/80 backdrop-blur-sm border border-dusty-rose/20 rounded-[2rem] p-8">
-          <h2 className="font-[family-name:var(--font-serif)] text-xl font-bold text-navy mb-2">
-            API Keys
-          </h2>
-          <p className="text-sm text-navy/50 font-light mb-6">
-            These are used for LLM-powered analysis and embeddings.
-          </p>
-
-          <div>
-            <label htmlFor="openai-key" className="block text-xs font-bold text-navy/60 uppercase tracking-widest mb-3">
-              OpenAI API Key
-            </label>
-            <input
-              id="openai-key"
-              type="password"
-              value={openaiKey}
-              onChange={(e) => setOpenaiKey(e.target.value)}
-              placeholder="sk-..."
-              className="w-full bg-cream/50 border border-dusty-rose/20 rounded-2xl px-5 py-4 text-navy placeholder:text-navy/20 text-sm focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all font-mono"
-            />
-          </div>
-        </div>
-
-        {/* ── Preferences ──────────────────────────────────────────── */}
-        <div className="bg-warm-white/80 backdrop-blur-sm border border-dusty-rose/20 rounded-[2rem] p-8">
-          <h2 className="font-[family-name:var(--font-serif)] text-xl font-bold text-navy mb-6">
-            Preferences
-          </h2>
-
-          <div>
-            <label htmlFor="default-expertise" className="block text-xs font-bold text-navy/60 uppercase tracking-widest mb-3">
-              Default Expertise Level
-            </label>
-            <select
-              id="default-expertise"
-              value={defaultExpertise}
-              onChange={(e) => setDefaultExpertise(e.target.value)}
-              className="w-full bg-cream/50 border border-dusty-rose/20 rounded-2xl px-5 py-4 text-navy text-sm focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all appearance-none cursor-pointer"
-            >
-              <option value="beginner">Beginner</option>
-              <option value="intermediate">Intermediate</option>
-              <option value="expert">Expert</option>
-            </select>
-          </div>
-        </div>
-
-        {/* ── Save ─────────────────────────────────────────────────── */}
-        <button
-          type="submit"
-          className="w-full bg-navy text-cream font-medium py-4 rounded-[2rem] hover:bg-navy-light transition-all hover:-translate-y-1 shadow-xl shadow-navy/15 flex items-center justify-center gap-3 text-base"
-        >
-          {saved ? (
-            <><CheckIcon /> Saved Successfully</>
-          ) : (
-            'Save Changes'
+          {passwordError && (
+            <div className="mt-5 bg-dusty-rose/10 border border-dusty-rose/30 rounded-2xl p-4 text-dusty-rose text-sm">
+              {passwordError}
+            </div>
           )}
-        </button>
+
+          <button
+            type="submit"
+            disabled={passwordSaving}
+            className="w-full mt-6 bg-navy text-cream font-medium py-4 rounded-[2rem] hover:bg-navy-light transition-all hover:-translate-y-1 shadow-xl shadow-navy/15 flex items-center justify-center gap-3 text-base disabled:opacity-60"
+          >
+            {passwordSaved ? (
+              <><CheckIcon /> Password Updated</>
+            ) : passwordSaving ? (
+              'Updating…'
+            ) : (
+              'Update Password'
+            )}
+          </button>
+        </form>
 
         {/* ── Danger Zone ──────────────────────────────────────────── */}
-        <div className="border border-dusty-rose/30 rounded-[2rem] p-8 mt-6">
+        <div className="border border-dusty-rose/30 rounded-[2rem] p-8">
           <h3 className="text-sm font-bold text-dusty-rose uppercase tracking-widest mb-3">Danger Zone</h3>
           <p className="text-sm text-navy/50 font-light mb-6">
-            Permanently delete your account and all associated data.
+            Permanently delete your account and all associated datasets and analysis history. This cannot be undone.
           </p>
-          <button
-            type="button"
-            className="text-sm font-medium text-dusty-rose border border-dusty-rose/40 px-6 py-3 rounded-2xl hover:bg-dusty-rose/10 transition-colors"
-          >
-            Delete Account
-          </button>
+
+          {deleteError && (
+            <div className="mb-4 bg-dusty-rose/10 border border-dusty-rose/30 rounded-2xl p-4 text-dusty-rose text-sm">
+              {deleteError}
+            </div>
+          )}
+
+          {!confirmingDelete ? (
+            <button
+              type="button"
+              onClick={() => setConfirmingDelete(true)}
+              className="text-sm font-medium text-dusty-rose border border-dusty-rose/40 px-6 py-3 rounded-2xl hover:bg-dusty-rose/10 transition-colors"
+            >
+              Delete Account
+            </button>
+          ) : (
+            <div className="flex items-center gap-3">
+              <p className="text-sm text-navy font-medium">Are you sure?</p>
+              <button
+                type="button"
+                onClick={handleDeleteAccount}
+                disabled={deleting}
+                className="text-sm font-bold text-cream bg-dusty-rose px-6 py-3 rounded-2xl hover:bg-red-500 transition-colors disabled:opacity-60"
+              >
+                {deleting ? 'Deleting…' : 'Yes, delete everything'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmingDelete(false)}
+                disabled={deleting}
+                className="text-sm font-medium text-navy/50 px-6 py-3 rounded-2xl hover:bg-cream-dark/50 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
-      </form>
+      </div>
     </div>
   );
 }

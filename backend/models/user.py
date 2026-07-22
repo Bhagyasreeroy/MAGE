@@ -44,6 +44,11 @@ class User(Base):
         default=True,
         nullable=False,
     )
+    default_expertise_level: Mapped[str] = mapped_column(
+        String(20),
+        default="intermediate",
+        nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

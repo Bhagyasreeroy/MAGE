@@ -3,8 +3,10 @@ core/database.py
 ────────────────
 Async SQLAlchemy database engine + session factory.
 
-Uses aiosqlite for local development.  Switch the DATABASE_URL
-in settings to PostgreSQL (asyncpg) for production.
+Postgres (asyncpg) is the primary target — see DATABASE_URL in
+core/config.py / docker-compose.yml. sqlite+aiosqlite is still accepted
+(e.g. for a dependency-free test run) since it needs no special handling
+beyond the connect_args below.
 """
 
 from sqlalchemy.ext.asyncio import (
@@ -13,6 +15,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
 from backend.core.config import settings
 
@@ -20,7 +23,13 @@ from backend.core.config import settings
 engine = create_async_engine(
     settings.database_url,
     echo=settings.environment == "development",
-    # SQLite needs this to allow async usage
+    # NullPool: a pooled asyncpg connection is bound to the event loop it
+    # was created on, and Starlette's TestClient can run each request on a
+    # fresh loop — reusing a pooled connection across loops raises
+    # "another operation is in progress". A fresh connection per request
+    # avoids that at a small cost, appropriate at this project's scale.
+    poolclass=NullPool,
+    # SQLite needs this to allow async usage; ignored by other dialects.
     connect_args={"check_same_thread": False}
     if "sqlite" in settings.database_url
     else {},

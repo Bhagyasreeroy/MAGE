@@ -43,6 +43,7 @@ RUN pip install --upgrade pip hatch && \
         openpyxl \
         httpx \
         "sqlalchemy[asyncio]" \
+        asyncpg \
         aiosqlite \
         "passlib[bcrypt]" \
         "python-jose[cryptography]"

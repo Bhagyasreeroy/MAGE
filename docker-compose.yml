@@ -5,6 +5,7 @@ version: "3.9"
 #   backend   — FastAPI (port 8000)
 #   frontend  — Next.js (port 3000)
 #   chromadb  — ChromaDB vector store (port 8001)
+#   postgres  — Postgres database (port 5432)
 #
 # Usage:
 #   cp .env.example .env
@@ -30,10 +31,14 @@ services:
       - FAISS_INDEX_PATH=/app/data/faiss_index
       - CHROMA_DB_PATH=/app/data/chroma_db
       - PROCESSING_ENGINE=${PROCESSING_ENGINE:-pandas}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-mage}:${POSTGRES_PASSWORD:-mage}@postgres:5432/${POSTGRES_DB:-mage}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-CHANGE-ME-IN-PRODUCTION-use-openssl-rand-hex-32}
     volumes:
       - ./data:/app/data
     depends_on:
       chromadb:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -68,6 +73,28 @@ services:
       - mage-network
     restart: unless-stopped
 
+  # ── Postgres ───────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: mage-postgres
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-mage}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-mage}
+      - POSTGRES_DB=${POSTGRES_DB:-mage}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mage} -d ${POSTGRES_DB:-mage}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - mage-network
+    restart: unless-stopped
+
   # ── ChromaDB Vector Store ──────────────────────────────────────────────────
   chromadb:
     image: chromadb/chroma:latest
@@ -93,6 +120,8 @@ services:
 # ── Volumes ────────────────────────────────────────────────────────────────────
 volumes:
   chroma-data:
+    driver: local
+  postgres-data:
     driver: local
 
 # ── Networks ───────────────────────────────────────────────────────────────────
