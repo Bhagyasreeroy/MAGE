@@ -1,22 +1,33 @@
 """
 agents/mining_agent.py
 ───────────────────────
-MiningAgent — statistical profiling and pattern discovery.
+MiningAgent — goal-conditioned statistical profiling and pattern discovery.
 
-Consumes the canonical DataFrame that IngestionAgent places into the
-shared pipeline context and computes:
-    • Per-column descriptive statistics (numeric and categorical).
-    • Data-quality metrics (completeness, uniqueness) per column.
-    • A Pearson correlation matrix over numeric columns.
-    • IQR-based outlier counts per numeric column.
-    • PCA-based feature importance (|loading| on the first principal
-      component) — an unsupervised, goal-agnostic ranking since no
-      target column / predictive model is assumed.
-    • KMeans clustering (silhouette-selected k) when there are enough
-      numeric columns and rows for it to be meaningful.
-    • A list of human-readable pattern strings, which the
-      RecommendationAgent folds into its RAG retrieval query so
-      recommendations are grounded in what was actually found.
+The set of computations run is **conditioned on the planner's directives**
+(Module 2 → FR-02): the goal decides which statistics are computed, not just
+which are surfaced. Two different goals on the same dataset therefore produce
+different mining output — the same-dataset/different-goal behaviour the project
+is evaluated on.
+
+Computations, keyed by the directive tokens the PipelinePlanner emits:
+    • ``correlation``                         → Pearson correlation matrix
+    • ``iqr_outliers`` / ``distribution_tails`` → IQR outlier counts
+    • ``isolation_forest``                    → Isolation Forest outlier detection
+    • ``feature_importance``                  → PCA-loading feature ranking
+    • ``kmeans`` / ``silhouette`` / ``standardize`` → KMeans (silhouette-selected k)
+    • ``dbscan``                              → DBSCAN density clustering
+    • ``class_balance``                       → target class distribution / imbalance
+    • ``linearity_check``                     → feature↔target Pearson linearity
+
+Per-column descriptive statistics and data-quality metrics are always
+computed. When no directives are supplied (e.g. a direct ``MiningAgent().run``
+call outside the orchestrator), the agent falls back to the full unconditioned
+profile — correlation, IQR outliers, feature importance, and KMeans — so it is
+useful standalone.
+
+Human-readable pattern strings summarise whatever was computed; the
+RecommendationAgent folds these into its RAG retrieval query so recommendations
+are grounded in what was actually found.
 """
 
 from __future__ import annotations
@@ -63,33 +74,66 @@ class MiningAgent:
         context = context or {}
         directives = context.get("directives", {}) or {}
         task_type = directives.get("task_type") or context.get("task_type")
-        computations = directives.get("computations", [])
+        computations = {str(c) for c in (directives.get("computations", []) or [])}
+        target_column = directives.get("target_column")
+        # No directive tokens → run the full unconditioned profile (standalone
+        # use, and the reporting default). Tokens present → run only what the
+        # goal's plan asked for.
+        conditioned = bool(computations)
         logger.info(
-            "MiningAgent.run() | goal=%r task_type=%s computations=%s",
-            context.get("goal"), task_type, computations,
+            "MiningAgent.run() | goal=%r task_type=%s conditioned=%s computations=%s",
+            context.get("goal"), task_type, conditioned, sorted(computations),
         )
 
         df: pd.DataFrame | None = context.get("dataframe")
         if df is None or df.empty:
-            return {
-                "statistics": {},
-                "data_quality": {},
-                "correlations": {},
-                "outliers": {},
-                "feature_importance": [],
-                "clustering": None,
-                "patterns": [],
-                "message": "No ingested dataset available — profiling skipped.",
-            }
+            return self._empty_result("No ingested dataset available — profiling skipped.")
 
         numeric_cols = df.select_dtypes(include="number").columns.tolist()
 
+        def wants(*tokens: str) -> bool:
+            """True if unconditioned (full default) or any token was requested."""
+            return not conditioned or any(t in computations for t in tokens)
+
+        # Always computed.
         statistics = self._compute_statistics(df, numeric_cols)
         data_quality = self._compute_data_quality(df)
-        correlations = self._compute_correlations(df, numeric_cols)
-        outliers = self._compute_outliers(df, numeric_cols)
-        feature_importance = self._compute_feature_importance(df, numeric_cols)
-        clustering = self._compute_clustering(df, numeric_cols)
+
+        # Conditioned computations. Correlation is also needed by linearity.
+        correlations = (
+            self._compute_correlations(df, numeric_cols)
+            if wants("correlation", "linearity_check") else {}
+        )
+        outliers = (
+            self._compute_outliers(df, numeric_cols)
+            if wants("iqr_outliers", "distribution_tails") else {}
+        )
+        feature_importance = (
+            self._compute_feature_importance(df, numeric_cols)
+            if wants("feature_importance") else []
+        )
+        clustering = (
+            self._compute_clustering(df, numeric_cols)
+            if wants("kmeans", "silhouette", "standardize") else None
+        )
+
+        # Opt-in computations — only when explicitly requested by the plan.
+        isolation_forest = (
+            self._compute_isolation_forest(df, numeric_cols)
+            if "isolation_forest" in computations else {}
+        )
+        dbscan = (
+            self._compute_dbscan(df, numeric_cols)
+            if "dbscan" in computations else None
+        )
+        class_balance = (
+            self._compute_class_balance(df, target_column)
+            if "class_balance" in computations else {}
+        )
+        linearity = (
+            self._compute_linearity(df, numeric_cols, target_column)
+            if "linearity_check" in computations else []
+        )
 
         patterns = self._build_patterns(
             correlations=correlations,
@@ -97,6 +141,10 @@ class MiningAgent:
             statistics=statistics,
             clustering=clustering,
             row_count=len(df),
+            isolation_forest=isolation_forest,
+            dbscan=dbscan,
+            class_balance=class_balance,
+            linearity=linearity,
         )
 
         return {
@@ -106,8 +154,34 @@ class MiningAgent:
             "outliers": outliers,
             "feature_importance": feature_importance,
             "clustering": clustering,
+            "isolation_forest": isolation_forest,
+            "dbscan": dbscan,
+            "class_balance": class_balance,
+            "linearity": linearity,
             "patterns": patterns,
+            "task_type": task_type,
+            "computations_run": sorted(computations) if conditioned else ["<default profile>"],
             "message": f"Profiled {len(df)} rows across {len(df.columns)} columns.",
+        }
+
+    @staticmethod
+    def _empty_result(message: str) -> dict[str, Any]:
+        """Shape-stable empty result (all keys present) for no-data paths."""
+        return {
+            "statistics": {},
+            "data_quality": {},
+            "correlations": {},
+            "outliers": {},
+            "feature_importance": [],
+            "clustering": None,
+            "isolation_forest": {},
+            "dbscan": None,
+            "class_balance": {},
+            "linearity": [],
+            "patterns": [],
+            "task_type": None,
+            "computations_run": [],
+            "message": message,
         }
 
     # ── Statistics ────────────────────────────────────────────────────────
@@ -270,6 +344,118 @@ class MiningAgent:
             logger.warning("Clustering failed: %s", exc)
             return None
 
+    # ── Isolation Forest (multivariate outliers, anomaly goals) ──────────
+
+    def _compute_isolation_forest(self, df: pd.DataFrame, numeric_cols: list[str]) -> dict[str, Any]:
+        if len(numeric_cols) < 1:
+            return {}
+        matrix = df[numeric_cols].dropna()
+        if len(matrix) < MIN_ROWS_FOR_CLUSTERING:
+            return {}
+        try:
+            from sklearn.ensemble import IsolationForest
+            from sklearn.preprocessing import StandardScaler
+
+            scaled = StandardScaler().fit_transform(matrix)
+            model = IsolationForest(random_state=42, contamination="auto")
+            preds = model.fit_predict(scaled)  # -1 = outlier, 1 = inlier
+            n_outliers = int((preds == -1).sum())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Isolation Forest failed: %s", exc)
+            return {}
+
+        return {
+            "method": "isolation_forest",
+            "n_outliers": n_outliers,
+            "pct": round(n_outliers / len(matrix) * 100, 1) if len(matrix) else 0.0,
+            "n_samples": int(len(matrix)),
+            "features": list(numeric_cols),
+        }
+
+    # ── DBSCAN (density clustering, clustering goals) ────────────────────
+
+    def _compute_dbscan(self, df: pd.DataFrame, numeric_cols: list[str]) -> dict[str, Any] | None:
+        if len(numeric_cols) < MIN_NUMERIC_COLUMNS_FOR_PCA:
+            return None
+        matrix = df[numeric_cols].dropna()
+        if len(matrix) < MIN_ROWS_FOR_CLUSTERING:
+            return None
+        try:
+            from sklearn.cluster import DBSCAN
+            from sklearn.neighbors import NearestNeighbors
+            from sklearn.preprocessing import StandardScaler
+
+            scaled = StandardScaler().fit_transform(matrix)
+            min_samples = min(5, len(matrix) - 1)
+            # eps via the k-distance heuristic: the median distance to each
+            # point's min_samples-th nearest neighbour is a robust default.
+            nn = NearestNeighbors(n_neighbors=min_samples).fit(scaled)
+            distances, _ = nn.kneighbors(scaled)
+            eps = float(np.median(distances[:, -1]))
+            if not np.isfinite(eps) or eps <= 0:
+                eps = 0.5
+
+            labels = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(scaled)
+            unique = set(labels)
+            n_clusters = len(unique - {-1})
+            n_noise = int((labels == -1).sum())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("DBSCAN failed: %s", exc)
+            return None
+
+        return {
+            "method": "dbscan",
+            "n_clusters": n_clusters,
+            "n_noise": n_noise,
+            "eps": round(eps, 3),
+            "min_samples": int(min_samples),
+        }
+
+    # ── Class balance (classification goals) ─────────────────────────────
+
+    def _compute_class_balance(self, df: pd.DataFrame, target_column: str | None) -> dict[str, Any]:
+        if not target_column or target_column not in df.columns:
+            return {}
+        counts = df[target_column].value_counts(dropna=True)
+        total = int(counts.sum())
+        if total == 0:
+            return {}
+        distribution = [
+            {"class": str(cls), "count": int(cnt), "pct": round(cnt / total * 100, 1)}
+            for cls, cnt in counts.head(20).items()
+        ]
+        majority, minority = int(counts.max()), int(counts.min())
+        return {
+            "target": target_column,
+            "n_classes": int(counts.nunique()),
+            "distribution": distribution,
+            "imbalance_ratio": round(majority / minority, 2) if minority > 0 else None,
+        }
+
+    # ── Linearity check (regression goals) ───────────────────────────────
+
+    def _compute_linearity(
+        self, df: pd.DataFrame, numeric_cols: list[str], target_column: str | None
+    ) -> list[dict[str, Any]]:
+        # Linearity is feature↔target Pearson correlation; needs a numeric target.
+        if not target_column or target_column not in numeric_cols:
+            return []
+        result: list[dict[str, Any]] = []
+        for col in numeric_cols:
+            if col == target_column:
+                continue
+            pair = df[[col, target_column]].dropna()
+            if len(pair) < 3:
+                continue
+            r = pair[col].corr(pair[target_column])
+            if pd.isna(r):
+                continue
+            r = float(r)
+            strength = "strong" if abs(r) >= 0.6 else "moderate" if abs(r) >= 0.3 else "weak"
+            result.append({"feature": col, "pearson_r": round(r, 3), "linear_strength": strength})
+        result.sort(key=lambda d: abs(d["pearson_r"]), reverse=True)
+        return result
+
     # ── Pattern summaries (feed the RAG retrieval query) ─────────────────
 
     def _build_patterns(
@@ -279,6 +465,10 @@ class MiningAgent:
         statistics: dict[str, Any],
         clustering: dict[str, Any] | None,
         row_count: int,
+        isolation_forest: dict[str, Any] | None = None,
+        dbscan: dict[str, Any] | None = None,
+        class_balance: dict[str, Any] | None = None,
+        linearity: list[dict[str, Any]] | None = None,
     ) -> list[str]:
         patterns: list[str] = []
 
@@ -305,6 +495,33 @@ class MiningAgent:
             patterns.append(
                 f"Data separates into {clustering['k']} clusters "
                 f"(silhouette score={clustering['silhouette_score']})."
+            )
+
+        if isolation_forest:
+            patterns.append(
+                f"Isolation Forest flagged {isolation_forest['n_outliers']} multivariate "
+                f"anomaly(ies) ({isolation_forest['pct']}% of rows)."
+            )
+
+        if dbscan is not None:
+            patterns.append(
+                f"DBSCAN found {dbscan['n_clusters']} density-based cluster(s) "
+                f"with {dbscan['n_noise']} noise point(s) (eps={dbscan['eps']})."
+            )
+
+        if class_balance:
+            ratio = class_balance.get("imbalance_ratio")
+            ratio_txt = f" (imbalance ratio {ratio}:1)" if ratio and ratio > 1.5 else ""
+            patterns.append(
+                f"Target '{class_balance['target']}' has {class_balance['n_classes']} "
+                f"class(es){ratio_txt}."
+            )
+
+        if linearity:
+            top = linearity[0]
+            patterns.append(
+                f"'{top['feature']}' has a {top['linear_strength']} linear relationship "
+                f"with the target (r={top['pearson_r']})."
             )
 
         return patterns
