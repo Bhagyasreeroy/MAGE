@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { authFetchFormData, fetchAnalysisRun } from '../../../lib/api';
+import { authFetchFormData, downloadAuthenticatedFile, fetchAnalysisRun } from '../../../lib/api';
 import { BarChart, BoxPlot, ClusterScatter, CorrelationHeatmap, Histogram } from '../../../components/charts';
 import { Markdown } from '../../../components/markdown';
 
@@ -92,6 +92,25 @@ const SendIcon = () => (
   </svg>
 );
 
+const PdfIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 11v6m0 0l-2.5-2.5M12 17l2.5-2.5" />
+  </svg>
+);
+
+const JsonIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+  </svg>
+);
+
+const CitationIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V5a2 2 0 012-2h9a2 2 0 012 2v9a2 2 0 01-2 2h-2M5 8h9a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2v-9a2 2 0 012-2z" />
+  </svg>
+);
+
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -104,6 +123,8 @@ export default function AnalysisResultPage() {
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const [exportingKey, setExportingKey] = useState<'pdf' | 'json' | 'citations' | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -179,6 +200,19 @@ export default function AnalysisResultPage() {
       setChatHistory((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `Error: ${message}` }]);
     } finally {
       setIsSending(false);
+    }
+  }
+
+  async function handleExport(kind: 'pdf' | 'json' | 'citations') {
+    if (!result?.run_id || exportingKey) return;
+    setExportError(null);
+    setExportingKey(kind);
+    try {
+      await downloadAuthenticatedFile(`/analysis/history/${result.run_id}/export/${kind}`);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Export failed');
+    } finally {
+      setExportingKey(null);
     }
   }
 
@@ -389,6 +423,66 @@ export default function AnalysisResultPage() {
           </div>
         </div>
       </div>
+
+      {/* ── Export ─────────────────────────────────────────────────── */}
+      {result.run_id && (
+        <div className="mb-8 animate-slide-up delay-150">
+          <h3 className="text-xs font-bold text-navy/40 uppercase tracking-widest mb-3">Export</h3>
+          {exportError && (
+            <div className="mb-4 bg-dusty-rose/10 border border-dusty-rose/30 rounded-2xl p-4 text-dusty-rose text-sm">
+              {exportError}
+            </div>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {(
+              [
+                {
+                  key: 'pdf' as const,
+                  icon: <PdfIcon />,
+                  title: 'PDF Report',
+                  description: 'Summary, data quality, recommendations, and citations in one document.',
+                  cta: 'Download PDF',
+                },
+                {
+                  key: 'json' as const,
+                  icon: <JsonIcon />,
+                  title: 'JSON Export',
+                  description: 'The full raw run — every step, stat, and recommendation.',
+                  cta: 'Download JSON',
+                },
+                {
+                  key: 'citations' as const,
+                  icon: <CitationIcon />,
+                  title: 'Citation Bundle',
+                  description: 'BibTeX entries for every knowledge-base source cited in this run.',
+                  cta: 'Download .bib',
+                },
+              ]
+            ).map((option) => (
+              <div
+                key={option.key}
+                className="bg-warm-white/80 backdrop-blur-sm border border-dusty-rose/20 rounded-2xl p-6 flex flex-col"
+              >
+                <div className="w-10 h-10 bg-lavender-light/40 text-navy-muted rounded-xl flex items-center justify-center mb-4">
+                  {option.icon}
+                </div>
+                <p className="font-bold text-navy text-sm mb-1.5">{option.title}</p>
+                <p className="text-xs text-navy/50 font-light leading-relaxed mb-5 flex-1">
+                  {option.description}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleExport(option.key)}
+                  disabled={exportingKey !== null}
+                  className="text-xs font-semibold text-navy bg-cream-dark/60 hover:bg-cream-dark px-4 py-2.5 rounded-xl transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {exportingKey === option.key ? 'Preparing…' : option.cta}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Continuous Chat History ────────────────────────────────── */}
       <div className="space-y-6 animate-slide-up delay-200">
