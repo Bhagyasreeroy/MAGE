@@ -48,6 +48,13 @@ MIN_ROWS_FOR_CLUSTERING = 10
 MAX_CLUSTER_K = 6
 MAX_SCATTER_POINTS = 500
 
+# Identifier columns (order_id, row index) carry no distributional signal and
+# skew distance/variance-based models (PCA, KMeans, DBSCAN, Isolation Forest),
+# so they are excluded from those models. Detected by name or by a
+# sequential-integer structure — NOT by uniqueness alone, since continuous
+# measurements (revenue, price) are also near-unique but are real features.
+_ID_NAME_EXACT = {"id", "index", "idx", "key", "uuid", "guid", "rowid", "row_id", "row_number", "sno"}
+
 # A correlation at or above this magnitude is called out as a pattern.
 STRONG_CORRELATION_THRESHOLD = 0.6
 
@@ -265,9 +272,34 @@ class MiningAgent:
             }
         return outliers
 
+    # ── Model feature selection (drop identifier columns) ────────────────
+
+    def _model_feature_columns(self, df: pd.DataFrame, numeric_cols: list[str]) -> list[str]:
+        """Numeric columns minus identifier columns, which skew distance/
+        variance-based models (PCA, KMeans, DBSCAN, Isolation Forest)."""
+        return [c for c in numeric_cols if not self._is_identifier_column(df, c)]
+
+    def _is_identifier_column(self, df: pd.DataFrame, col: str) -> bool:
+        """True if `col` is an identifier — by name (id/index/…/*_id) or by a
+        strictly-increasing, fully-unique integer structure (a row id). Not
+        based on uniqueness alone: continuous measurements are near-unique too."""
+        n = len(df)
+        if n == 0:
+            return False
+        name = str(col).strip().lower()
+        if name in _ID_NAME_EXACT or name.endswith(("_id", "_key", "_uuid")):
+            return True
+        series = df[col].dropna()
+        if len(series) == n and series.nunique() == n and pd.api.types.is_integer_dtype(df[col]):
+            arr = series.to_numpy()
+            if len(arr) > 1 and bool((arr[1:] > arr[:-1]).all()):  # strictly increasing → sequential id
+                return True
+        return False
+
     # ── Feature importance (unsupervised, PCA-based) ─────────────────────
 
     def _compute_feature_importance(self, df: pd.DataFrame, numeric_cols: list[str]) -> list[dict[str, Any]]:
+        numeric_cols = self._model_feature_columns(df, numeric_cols)
         if len(numeric_cols) < MIN_NUMERIC_COLUMNS_FOR_PCA:
             return []
 
@@ -299,6 +331,7 @@ class MiningAgent:
     # ── Clustering (goal-agnostic, KMeans with silhouette-selected k) ────
 
     def _compute_clustering(self, df: pd.DataFrame, numeric_cols: list[str]) -> dict[str, Any] | None:
+        numeric_cols = self._model_feature_columns(df, numeric_cols)
         if len(numeric_cols) < MIN_NUMERIC_COLUMNS_FOR_PCA:
             return None
 
@@ -347,6 +380,7 @@ class MiningAgent:
     # ── Isolation Forest (multivariate outliers, anomaly goals) ──────────
 
     def _compute_isolation_forest(self, df: pd.DataFrame, numeric_cols: list[str]) -> dict[str, Any]:
+        numeric_cols = self._model_feature_columns(df, numeric_cols)
         if len(numeric_cols) < 1:
             return {}
         matrix = df[numeric_cols].dropna()
@@ -375,6 +409,7 @@ class MiningAgent:
     # ── DBSCAN (density clustering, clustering goals) ────────────────────
 
     def _compute_dbscan(self, df: pd.DataFrame, numeric_cols: list[str]) -> dict[str, Any] | None:
+        numeric_cols = self._model_feature_columns(df, numeric_cols)
         if len(numeric_cols) < MIN_NUMERIC_COLUMNS_FOR_PCA:
             return None
         matrix = df[numeric_cols].dropna()
