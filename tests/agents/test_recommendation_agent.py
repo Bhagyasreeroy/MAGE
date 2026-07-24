@@ -68,3 +68,63 @@ class TestRecommendationAgent:
         agent.run(context={"goal": "How do I handle missing values?"})
         result = agent.run(context={"goal": "How do I handle missing values?"})
         assert len(result["recommendations"]) > 0
+
+
+class TestQAShortCircuit:
+    """A specific factual question should get a direct computed answer, not
+    a RAG dump — this is what makes follow-up chat feel conversational."""
+
+    def test_direct_question_returns_single_computed_recommendation(self, agent: RecommendationAgent) -> None:
+        context = {
+            "goal": "which column has the most missing values",
+            "MiningAgent_output": {
+                "data_quality": {
+                    "units": {"completeness_pct": 90.0, "uniqueness_pct": 50.0, "missing_count": 3},
+                    "revenue": {"completeness_pct": 100.0, "uniqueness_pct": 90.0, "missing_count": 0},
+                },
+            },
+        }
+        result = agent.run(context=context)
+
+        assert len(result["recommendations"]) == 1
+        rec = result["recommendations"][0]
+        assert rec["insight"] == "Computed from your data"
+        assert rec["confidence"] == 1.0
+        assert "units" in rec["text_technical"]
+        assert rec["text_technical"] == rec["text_plain"]
+
+    def test_broad_goal_falls_through_to_rag(self, agent: RecommendationAgent) -> None:
+        context = {
+            "goal": "Summarize this dataset",
+            "MiningAgent_output": {"data_quality": {"units": {"completeness_pct": 100.0, "uniqueness_pct": 50.0, "missing_count": 0}}},
+        }
+        result = agent.run(context=context)
+        assert len(result["recommendations"]) > 0
+        assert result["recommendations"][0]["insight"] != "Computed from your data"
+
+
+class TestFindingLedRecommendations:
+    def test_pattern_leads_the_technical_text(self, agent: RecommendationAgent) -> None:
+        context = {
+            "goal": "Find outliers in this dataset",
+            "MiningAgent_output": {
+                "patterns": ["3 outlier(s) detected in 'revenue' via IQR (10.0% of rows)."],
+            },
+        }
+        result = agent.run(context=context)
+
+        assert len(result["recommendations"]) > 0
+        technical = result["recommendations"][0]["text_technical"]
+        assert technical.startswith("**3 outlier(s) detected in 'revenue'")
+        # The chunk's own heading must still be on its own line (not fused
+        # onto the pattern line), or Markdown can't render it as a heading.
+        assert "\n\n#" in technical or technical.count("\n\n") >= 1
+
+    def test_no_mid_sentence_fragment_at_start_of_chunk_portion(self, agent: RecommendationAgent) -> None:
+        context = {"goal": "Tell me about clustering methods for this data"}
+        result = agent.run(context=context)
+        for rec in result["recommendations"]:
+            # A leading lowercase word (outside of markdown emphasis/heading
+            # markers) indicates an un-trimmed overlap fragment.
+            body = rec["text_technical"].lstrip("*#> \n")
+            assert not body[:1].islower(), f"starts mid-sentence: {body[:60]!r}"
