@@ -55,6 +55,8 @@ MIN_CONFIDENCE = 0.15
 
 _MARKDOWN_STRIP_RE = re.compile(r"[#*`|>]|^-\s+", re.MULTILINE)
 _WHITESPACE_RE = re.compile(r"\s+")
+_HEADING_RE = re.compile(r"(?m)^\s*#{1,6}\s*")
+_INLINE_MD_RE = re.compile(r"[*`_]")
 
 
 def _get(obj: Any, key: str, default: Any = None) -> Any:
@@ -66,26 +68,56 @@ def _get(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
+def _strip_markdown_structure(text: str) -> str:
+    """Drop markdown tables and headings from a retrieved knowledge-base chunk.
+
+    Chunks contain markdown tables (``| Goal | Chart |``) and ``|---|---|``
+    separator rows. Inlined into a recommendation sentence these flatten into
+    unreadable runs of cell text ("numeric Line chart ... Choropleth ..."), so
+    we remove whole table lines rather than just stripping the pipe characters.
+    Prose before/after the table is preserved.
+    """
+    kept: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        # Separator rows like |---|:--:| or a bare horizontal rule.
+        if stripped and set(stripped) <= set("-|:= "):
+            continue
+        # Table rows: two or more pipe cell separators.
+        if stripped.count("|") >= 2:
+            continue
+        kept.append(line)
+    joined = "\n".join(kept)
+    joined = _HEADING_RE.sub("", joined)      # drop "## Heading" markers
+    joined = _INLINE_MD_RE.sub("", joined)    # drop * ` _ emphasis
+    return joined
+
+
 def _drop_leading_fragment(sentences: list[str]) -> list[str]:
     """Overlapping chunks can start mid-sentence (lowercase, no leading
     capital). Drop that leading fragment so text starts clean — used for
     both registers, not just the plain-language one."""
-    if len(sentences) > 1 and sentences[0][:1].islower():
-        return sentences[1:]
+    while len(sentences) > 1 and sentences[0].strip()[:1].islower():
+        sentences = sentences[1:]
     return sentences
 
 
 def _clean_technical(text: str) -> str:
-    """Verbatim chunk text, minus a truncated leading sentence fragment."""
-    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
-    return " ".join(_drop_leading_fragment(sentences)).strip() or text.strip()
+    """Readable chunk prose: markdown tables/headings removed, leading
+    sentence fragment dropped, whitespace normalised."""
+    cleaned = _strip_markdown_structure(text)
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", cleaned.strip()) if s.strip()]
+    result = " ".join(_drop_leading_fragment(sentences)).strip()
+    result = _WHITESPACE_RE.sub(" ", result)
+    return result or _WHITESPACE_RE.sub(" ", cleaned).strip() or text.strip()
 
 
 def _simplify(text: str) -> str:
-    """Strip Markdown syntax and return the first couple of complete sentences."""
-    cleaned = _MARKDOWN_STRIP_RE.sub(" ", text)
+    """Plain-language: strip Markdown, return the first couple of complete sentences."""
+    cleaned = _strip_markdown_structure(text)
+    cleaned = _MARKDOWN_STRIP_RE.sub(" ", cleaned)
     cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip()
-    sentences = _drop_leading_fragment(re.split(r"(?<=[.!?])\s+", cleaned))
+    sentences = _drop_leading_fragment([s for s in re.split(r"(?<=[.!?])\s+", cleaned) if s.strip()])
     plain = " ".join(sentences[:2]).strip()
     return plain or cleaned[:200]
 
