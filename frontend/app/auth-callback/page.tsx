@@ -1,16 +1,19 @@
 'use client';
 
-import { useEffect } from 'react';
+import { Suspense, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { storeAccessTokenOnly } from '../../lib/api';
+import { storeAccessTokenOnly } from '../lib/api';
 
-/**
- * /auth-callback
- * ──────────────
- * Landing page for the Google OAuth redirect.
- * Reads the `token` query param, stores it, then sends the user to the dashboard.
- */
-export default function AuthCallbackPage() {
+const Spinner = () => (
+  <div className="min-h-screen bg-cream flex items-center justify-center">
+    <div className="text-center animate-fade-in">
+      <div className="w-12 h-12 border-2 border-navy/20 border-t-navy rounded-full animate-spin mx-auto mb-4" />
+      <p className="text-navy/60 font-light text-sm">Signing you in…</p>
+    </div>
+  </div>
+);
+
+function AuthCallbackInner() {
   const router = useRouter();
   const params = useSearchParams();
 
@@ -25,12 +28,19 @@ export default function AuthCallbackPage() {
     }
   }, [params, router]);
 
+  return <Spinner />;
+}
+
+/**
+ * /auth-callback
+ * ──────────────
+ * Landing page for the Google OAuth redirect.
+ * Reads the `token` query param, stores it, then sends the user to the dashboard.
+ */
+export default function AuthCallbackPage() {
   return (
-    <div className="min-h-screen bg-cream flex items-center justify-center">
-      <div className="text-center animate-fade-in">
-        <div className="w-12 h-12 border-2 border-navy/20 border-t-navy rounded-full animate-spin mx-auto mb-4" />
-        <p className="text-navy/60 font-light text-sm">Signing you in…</p>
-      </div>
-    </div>
+    <Suspense fallback={<Spinner />}>
+      <AuthCallbackInner />
+    </Suspense>
   );
 }
