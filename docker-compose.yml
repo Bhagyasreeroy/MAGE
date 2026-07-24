@@ -4,8 +4,11 @@ version: "3.9"
 # Services:
 #   backend   — FastAPI (port 8000)
 #   frontend  — Next.js (port 3000)
-#   chromadb  — ChromaDB vector store (port 8001)
 #   postgres  — Postgres database (port 5432)
+#
+# Note: the vector store runs in-process via chromadb's embedded
+# PersistentClient (see rag/vector_store.py), persisted to ./data/chroma_db.
+# No separate ChromaDB server container is required.
 #
 # Usage:
 #   cp .env.example .env
@@ -26,8 +29,6 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - VECTOR_STORE_BACKEND=${VECTOR_STORE_BACKEND:-chroma}
-      - CHROMA_HOST=chromadb
-      - CHROMA_PORT=8001
       - FAISS_INDEX_PATH=/app/data/faiss_index
       - CHROMA_DB_PATH=/app/data/chroma_db
       - PROCESSING_ENGINE=${PROCESSING_ENGINE:-pandas}
@@ -36,12 +37,12 @@ services:
     volumes:
       - ./data:/app/data
     depends_on:
-      chromadb:
-        condition: service_healthy
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      # Use python, not curl — curl is only present in the Dockerfile's
+      # builder stage, never in the slim runtime image.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -64,7 +65,8 @@ services:
     depends_on:
       - backend
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      # Use node, not curl — curl is not installed in the alpine runner image.
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -95,32 +97,8 @@ services:
       - mage-network
     restart: unless-stopped
 
-  # ── ChromaDB Vector Store ──────────────────────────────────────────────────
-  chromadb:
-    image: chromadb/chroma:latest
-    container_name: mage-chromadb
-    ports:
-      - "${CHROMA_PORT:-8001}:8000"
-    environment:
-      - IS_PERSISTENT=TRUE
-      - PERSIST_DIRECTORY=/chroma/data
-      - ANONYMIZED_TELEMETRY=FALSE
-    volumes:
-      - chroma-data:/chroma/data
-    healthcheck:
-      test: ["CMD", "bash", "-c", "cat < /dev/null > /dev/tcp/127.0.0.1/8000"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    networks:
-      - mage-network
-    restart: unless-stopped
-
 # ── Volumes ────────────────────────────────────────────────────────────────────
 volumes:
-  chroma-data:
-    driver: local
   postgres-data:
     driver: local
 

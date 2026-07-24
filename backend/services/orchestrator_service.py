@@ -88,7 +88,7 @@ class OrchestratorService:
 
         if file is not None and resolved_dataset_id is not None:
             ingestion_output = next(
-                (s["output"] for s in steps if s["agent"] == "IngestionAgent" and s["status"] == "success"),
+                (s["output"] for s in steps if s["agent_name"] == "IngestionAgent" and s["status"] == "success"),
                 None,
             )
             if ingestion_output is not None:
@@ -118,6 +118,8 @@ class OrchestratorService:
         return AnalysisResponse(
             goal=request.goal,
             expertise_level=request.expertise_level,
+            task_type=raw_result.get("task_type"),
+            classification=raw_result.get("classification"),
             steps=steps,
             recommendations=recommendations,
             rag_sources=rag_sources,

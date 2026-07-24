@@ -61,7 +61,13 @@ class MiningAgent:
 
     def run(self, context: dict[str, Any] | None = None) -> dict[str, Any]:
         context = context or {}
-        logger.info("MiningAgent.run() | goal=%r", context.get("goal"))
+        directives = context.get("directives", {}) or {}
+        task_type = directives.get("task_type") or context.get("task_type")
+        computations = directives.get("computations", [])
+        logger.info(
+            "MiningAgent.run() | goal=%r task_type=%s computations=%s",
+            context.get("goal"), task_type, computations,
+        )
 
         df: pd.DataFrame | None = context.get("dataframe")
         if df is None or df.empty:

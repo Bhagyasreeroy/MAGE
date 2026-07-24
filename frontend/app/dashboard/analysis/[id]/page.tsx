@@ -5,16 +5,31 @@ import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { authFetchFormData, fetchAnalysisRun } from '../../../lib/api';
 import { BarChart, BoxPlot, ClusterScatter, CorrelationHeatmap, Histogram } from '../../../components/charts';
+import { Markdown } from '../../../components/markdown';
 
 interface StepResult {
-  agent: string;
+  // Mirrors the backend ReActStep schema (backend/schemas/analysis.py).
+  agent_name: string;
+  action: string;
+  reasoning: string;
+  observation: string;
   status: string;
+  latency_ms: number;
   output: Record<string, unknown>;
+}
+
+interface GoalClassification {
+  task_type: string;
+  target_column: string | null;
+  confidence: number;
+  rationale: string;
 }
 
 interface AnalysisResult {
   goal: string;
   expertise_level: string;
+  task_type: string | null;
+  classification: GoalClassification | null;
   steps: StepResult[];
   recommendations: string[];
   rag_sources: string[];
@@ -202,6 +217,29 @@ export default function AnalysisResultPage() {
           </div>
         </div>
 
+        {/* Goal classification — the Module 2 output that conditions the pipeline */}
+        {result.classification && (
+          <div className="mb-8">
+            <h3 className="text-xs font-bold text-navy/40 uppercase tracking-widest mb-3">Goal Classification</h3>
+            <div className="flex flex-wrap items-center gap-3 mb-2">
+              <span className="bg-navy text-cream text-sm font-bold px-4 py-1.5 rounded-full uppercase tracking-wide">
+                {result.classification.task_type.replace('_', ' ')}
+              </span>
+              <span className="text-navy/60 text-sm font-light">
+                {Math.round(result.classification.confidence * 100)}% confidence
+              </span>
+              {result.classification.target_column && (
+                <span className="text-navy/60 text-sm font-light">
+                  target: <span className="font-medium">{result.classification.target_column}</span>
+                </span>
+              )}
+            </div>
+            {result.classification.rationale && (
+              <p className="text-navy/50 text-sm font-light leading-relaxed">{result.classification.rationale}</p>
+            )}
+          </div>
+        )}
+
         {/* Summary */}
         <div className="mb-8">
           <h3 className="text-xs font-bold text-navy/40 uppercase tracking-widest mb-3">Executive Summary</h3>
@@ -215,7 +253,7 @@ export default function AnalysisResultPage() {
             {result.steps.map((step, idx) => (
               <div key={idx} className="bg-cream/50 border border-dusty-rose/15 rounded-2xl p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <p className="font-bold text-sm text-navy">{step.agent}</p>
+                  <p className="font-bold text-sm text-navy">{step.agent_name}</p>
                   {step.status === 'error' ? (
                     <span className="text-dusty-rose text-xs font-bold uppercase tracking-wide">Failed</span>
                   ) : (
@@ -223,6 +261,11 @@ export default function AnalysisResultPage() {
                   )}
                 </div>
                 <p className="text-xs text-navy/50 leading-relaxed font-light">{stepSummary(step)}</p>
+                {step.reasoning && (
+                  <p className="text-[11px] text-navy/35 italic leading-relaxed font-light mt-1.5">
+                    {step.reasoning}
+                  </p>
+                )}
               </div>
             ))}
           </div>
@@ -230,7 +273,7 @@ export default function AnalysisResultPage() {
 
         {/* Data Quality */}
         {(() => {
-          const miningOutput = result.steps.find((s) => s.agent === 'MiningAgent')?.output;
+          const miningOutput = result.steps.find((s) => s.agent_name === 'MiningAgent')?.output;
           const dataQuality = miningOutput?.data_quality as Record<string, DataQualityRow> | undefined;
           if (!dataQuality || Object.keys(dataQuality).length === 0) return null;
 
@@ -265,7 +308,7 @@ export default function AnalysisResultPage() {
 
         {/* Visualizations */}
         {(() => {
-          const vizOutput = result.steps.find((s) => s.agent === 'VisualizationAgent')?.output;
+          const vizOutput = result.steps.find((s) => s.agent_name === 'VisualizationAgent')?.output;
           const specs = (vizOutput?.viz_specs as VizSpec[] | undefined) ?? [];
           if (specs.length === 0) return null;
 
@@ -314,7 +357,7 @@ export default function AnalysisResultPage() {
               {result.recommendations.map((rec, idx) => (
                 <li key={idx} className="flex gap-3 text-navy/70 font-light">
                   <span className="text-navy-muted bg-cream-dark w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">{idx + 1}</span>
-                  {rec}
+                  <Markdown text={rec} className="flex-1 min-w-0 text-sm" />
                 </li>
               ))}
             </ul>
@@ -360,9 +403,11 @@ export default function AnalysisResultPage() {
                   <span className="text-xs font-bold uppercase tracking-widest">MAGE</span>
                 </div>
               )}
-              <p className="font-light leading-relaxed text-sm md:text-base">
-                {msg.content}
-              </p>
+              {msg.role === 'assistant' ? (
+                <Markdown text={msg.content} className="font-light leading-relaxed text-sm md:text-base" />
+              ) : (
+                <p className="font-light leading-relaxed text-sm md:text-base">{msg.content}</p>
+              )}
             </div>
           </div>
         ))}

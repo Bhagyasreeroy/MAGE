@@ -1,15 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import {
-  changePassword,
-  deleteAccount,
-  fetchCurrentUser,
-  logout,
-  updateProfile,
-  type UserProfile,
-} from '../../lib/api';
+import { useState } from 'react';
+import { changePassword, deleteAccount, updateProfile } from '../../lib/api';
+import { useAuth } from '../../lib/auth-context';
 
 const CheckIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -20,12 +13,13 @@ const CheckIcon = () => (
 type ExpertiseLevel = 'beginner' | 'intermediate' | 'expert';
 
 export default function SettingsPage() {
-  const router = useRouter();
-
-  const [user, setUser] = useState<UserProfile | null>(null);
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [defaultExpertise, setDefaultExpertise] = useState<ExpertiseLevel>('intermediate');
+  const { user, logout } = useAuth();
+  // Dashboard layout only renders this page once `user` is loaded, so this is safe.
+  const [name, setName] = useState(user!.full_name);
+  const [email, setEmail] = useState(user!.email);
+  const [defaultExpertise, setDefaultExpertise] = useState<ExpertiseLevel>(
+    (user!.default_expertise_level as ExpertiseLevel) || 'intermediate',
+  );
 
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
@@ -42,17 +36,6 @@ export default function SettingsPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchCurrentUser()
-      .then((u) => {
-        setUser(u);
-        setName(u.full_name);
-        setEmail(u.email);
-        setDefaultExpertise((u.default_expertise_level as ExpertiseLevel) || 'intermediate');
-      })
-      .catch(() => router.push('/signin'));
-  }, [router]);
-
   async function handleSaveProfile(e: React.FormEvent) {
     e.preventDefault();
     setProfileSaving(true);
@@ -64,7 +47,8 @@ export default function SettingsPage() {
         email,
         default_expertise_level: defaultExpertise,
       });
-      setUser(updated);
+      setName(updated.full_name);
+      setEmail(updated.email);
       setProfileSaved(true);
       setTimeout(() => setProfileSaved(false), 2000);
     } catch (err) {
@@ -105,15 +89,10 @@ export default function SettingsPage() {
     try {
       await deleteAccount();
       logout();
-      router.push('/signin');
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete account');
       setDeleting(false);
     }
-  }
-
-  if (!user) {
-    return null;
   }
 
   return (
@@ -139,8 +118,8 @@ export default function SettingsPage() {
               {(name || email).charAt(0).toUpperCase()}
             </div>
             <div>
-              <p className="font-bold text-lg text-navy">{user.full_name}</p>
-              <p className="text-sm text-navy/50 font-light">{user.email}</p>
+              <p className="font-bold text-lg text-navy">{name}</p>
+              <p className="text-sm text-navy/50 font-light">{email}</p>
             </div>
           </div>
 
