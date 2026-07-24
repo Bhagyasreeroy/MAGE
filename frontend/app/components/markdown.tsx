@@ -48,6 +48,20 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
   return nodes;
 }
 
+// A row of `| cell | cell |` — captures the inner content, not the separator row.
+const TABLE_ROW_RE = /^\s*\|(.+)\|\s*$/;
+// The `|---|---|` (or `:---:`) row directly under a table header.
+const TABLE_SEPARATOR_RE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+
+function splitTableRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim());
+}
+
 export function Markdown({ text, className = '' }: { text: string; className?: string }) {
   const lines = text.replace(/\r\n/g, '\n').split('\n');
   const blocks: ReactNode[] = [];
@@ -55,7 +69,41 @@ export function Markdown({ text, className = '' }: { text: string; className?: s
   let paragraph: string[] = [];
   let list: { ordered: boolean; items: string[] } | null = null;
   let code: string[] | null = null;
+  let table: string[][] | null = null;
   let key = 0;
+
+  const flushTable = () => {
+    if (table && table.length) {
+      const [header, ...rows] = table;
+      blocks.push(
+        <div key={`tbl-${key++}`} className="overflow-x-auto my-2">
+          <table className="text-xs border-collapse w-full">
+            <thead>
+              <tr>
+                {header.map((cell, i) => (
+                  <th key={i} className="text-left font-semibold text-navy border-b border-dusty-rose/30 px-2 py-1.5 whitespace-nowrap">
+                    {renderInline(cell, `th-${key}-${i}`)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, r) => (
+                <tr key={r} className="border-b border-dusty-rose/10 last:border-0">
+                  {row.map((cell, c) => (
+                    <td key={c} className="px-2 py-1.5 text-navy/70 align-top">
+                      {renderInline(cell, `td-${key}-${r}-${c}`)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      );
+      table = null;
+    }
+  };
 
   const flushParagraph = () => {
     if (paragraph.length) {
@@ -85,8 +133,31 @@ export function Markdown({ text, className = '' }: { text: string; className?: s
     }
   };
 
-  for (const raw of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
     const line = raw.trimEnd();
+
+    // Table: a `| ... |` row followed by a `|---|---|` separator starts a
+    // table; subsequent `| ... |` rows are its body until a non-table line.
+    if (table !== null && TABLE_ROW_RE.test(line)) {
+      table.push(splitTableRow(line));
+      continue;
+    }
+    if (
+      table === null &&
+      TABLE_ROW_RE.test(line) &&
+      i + 1 < lines.length &&
+      TABLE_SEPARATOR_RE.test(lines[i + 1])
+    ) {
+      flushParagraph();
+      flushList();
+      table = [splitTableRow(line)];
+      i += 1; // skip the separator row
+      continue;
+    }
+    if (table !== null) {
+      flushTable();
+    }
 
     // Fenced code block toggling
     if (line.trim().startsWith('```')) {
@@ -162,6 +233,7 @@ export function Markdown({ text, className = '' }: { text: string; className?: s
   // Flush anything left open
   flushParagraph();
   flushList();
+  flushTable();
   if (code !== null && code.length) {
     blocks.push(
       <pre key={`code-${key++}`} className="bg-navy/90 text-cream rounded-xl p-3 my-2 overflow-x-auto text-xs font-mono">
