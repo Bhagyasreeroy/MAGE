@@ -41,9 +41,11 @@ export function getRefreshToken(): string | null {
   return localStorage.getItem("mage_refresh_token");
 }
 
-export function storeTokens(access: string, refresh: string): void {
+export function storeTokens(access: string, refresh?: string): void {
   localStorage.setItem("mage_access_token", access);
-  localStorage.setItem("mage_refresh_token", refresh);
+  if (refresh) localStorage.setItem("mage_refresh_token", refresh);
+  // Also write a cookie so Next.js middleware can read it
+  document.cookie = `mage_token=${access}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
 }
 
 /**
@@ -59,6 +61,8 @@ export function storeAccessTokenOnly(access: string): void {
 export function clearTokens(): void {
   localStorage.removeItem("mage_access_token");
   localStorage.removeItem("mage_refresh_token");
+  // Clear the middleware cookie too
+  document.cookie = "mage_token=; path=/; max-age=0";
 }
 
 // ── Generic fetch wrapper ────────────────────────────────────────────────────
