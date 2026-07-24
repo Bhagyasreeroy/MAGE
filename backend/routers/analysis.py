@@ -7,6 +7,9 @@ Endpoints:
     GET  /analysis/knowledge-sources - list the RAG knowledge base documents
     GET  /analysis/history          - list the current user's past analysis runs
     GET  /analysis/history/{run_id} - fetch one past run in full
+    GET  /analysis/history/{run_id}/export/pdf       - download a PDF report
+    GET  /analysis/history/{run_id}/export/json      - download the raw run as JSON
+    GET  /analysis/history/{run_id}/export/citations - download a BibTeX citation bundle
     GET  /analysis/datasets         - list the current user's uploaded datasets
 
 All endpoints except /knowledge-sources require authentication — analysis
@@ -19,6 +22,7 @@ import io
 import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.ingestion_agent import IngestionAgent
@@ -35,7 +39,7 @@ from backend.schemas.analysis import (
     KnowledgeSource,
 )
 from backend.schemas.auth import MessageResponse
-from backend.services import analysis_run_service, dataset_service
+from backend.services import analysis_run_service, dataset_service, export_service
 from backend.services.orchestrator_service import OrchestratorService
 from data_pipeline.ingestion import IngestionError
 from rag.knowledge_loader import KnowledgeBaseLoader
@@ -185,9 +189,7 @@ async def get_history_run(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> AnalysisResponse:
-    run = await analysis_run_service.get_run(db, current_user.id, run_id)
-    if run is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis run not found.")
+    run = await _get_owned_run(run_id, current_user, db)
     return AnalysisResponse(
         goal=run.goal,
         expertise_level=run.expertise_level,
@@ -197,6 +199,68 @@ async def get_history_run(
         summary=run.summary,
         dataset_id=run.dataset_id,
         run_id=run.id,
+    )
+
+
+async def _get_owned_run(run_id: str, current_user: User, db: AsyncSession):
+    run = await analysis_run_service.get_run(db, current_user.id, run_id)
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis run not found.")
+    return run
+
+
+@router.get(
+    "/history/{run_id}/export/pdf",
+    status_code=status.HTTP_200_OK,
+    summary="Download a PDF report for one analysis run",
+)
+async def export_run_pdf(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    run = await _get_owned_run(run_id, current_user, db)
+    pdf_bytes = export_service.generate_pdf(run)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="mage-report-{run.id}.pdf"'},
+    )
+
+
+@router.get(
+    "/history/{run_id}/export/json",
+    status_code=status.HTTP_200_OK,
+    summary="Download the raw analysis run as JSON",
+)
+async def export_run_json(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    run = await _get_owned_run(run_id, current_user, db)
+    return Response(
+        content=export_service.generate_json(run),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="mage-export-{run.id}.json"'},
+    )
+
+
+@router.get(
+    "/history/{run_id}/export/citations",
+    status_code=status.HTTP_200_OK,
+    summary="Download a BibTeX citation bundle for one analysis run",
+)
+async def export_run_citations(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    run = await _get_owned_run(run_id, current_user, db)
+    return Response(
+        content=export_service.generate_citation_bundle(run),
+        media_type="application/x-bibtex",
+        headers={"Content-Disposition": f'attachment; filename="mage-citations-{run.id}.bib"'},
     )
 
 

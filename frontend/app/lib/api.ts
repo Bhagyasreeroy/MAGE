@@ -285,3 +285,36 @@ export async function fetchDatasets(): Promise<DatasetSummary[]> {
 export async function deleteDataset(datasetId: string): Promise<void> {
   await apiFetch(`/analysis/datasets/${datasetId}`, { method: "DELETE", auth: true });
 }
+
+// ── File downloads (binary responses, not JSON) ─────────────────────────────
+
+/**
+ * Fetch a binary export (PDF/JSON/BibTeX) with auth, then trigger a normal
+ * browser "Save As" download — the backend sets the real filename via
+ * Content-Disposition, so we read it back instead of guessing one.
+ */
+export async function downloadAuthenticatedFile(path: string): Promise<void> {
+  const token = getAccessToken();
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(parseApiError(body, response.status));
+  }
+
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const match = disposition.match(/filename="([^"]+)"/);
+  const filename = match ? match[1] : "download";
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
