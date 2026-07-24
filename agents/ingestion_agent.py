@@ -1,12 +1,14 @@
 """
 agents/ingestion_agent.py
 ──────────────────────────
-IngestionAgent — tabular data ingestion, validation, and profiling.
+IngestionAgent — multi-source data ingestion, validation, and profiling.
 
-Accepts CSV, TSV, JSON, Parquet, and Excel (XLSX/XLS) sources, normalises
-them into a canonical Pandas DataFrame via DataIngestionEngine, and profiles
-the result into a structured IngestionResult (row/column counts, per-column
-stats, and data-quality warnings).
+Accepts file sources (CSV, TSV, JSON, Parquet, Excel, PDF tables), SQL
+database URIs, and REST/HTTP endpoints, normalises them into a canonical
+Pandas DataFrame via DataIngestionEngine, and profiles the result into a
+structured IngestionResult (row/column counts, per-column stats, and
+data-quality warnings). The source type is auto-detected via
+``DataIngestionEngine.classify_source``.
 """
 
 from __future__ import annotations
@@ -74,11 +76,10 @@ class IngestionAgent:
         if target_source is None:
             raise IngestionError("No data source provided to IngestionAgent.")
 
-        logger.info("IngestionAgent running on source: %s", target_source)
+        source_type = self._engine.classify_source(target_source)
+        logger.info("IngestionAgent running on %s source: %s", source_type, target_source)
 
-        self._validate_raw_headers(target_source)
-
-        df = self._engine.load(target_source)
+        df = self._load_by_type(source_type, target_source, context)
 
         # Downstream agents (MiningAgent, VisualizationAgent) consume the
         # canonical DataFrame directly rather than re-parsing the source.
@@ -142,6 +143,34 @@ class IngestionAgent:
             column_summary=column_summary,
             warnings=warnings,
         )
+
+    def _load_by_type(
+        self,
+        source_type: str,
+        source: str | Path | UploadFile,
+        context: dict[str, Any],
+    ) -> pd.DataFrame:
+        """Route to the engine loader for the classified source type.
+
+        File sources also get raw-header validation (duplicate-column check)
+        before loading; URL and database sources have no CSV-style header to
+        pre-validate, so they go straight to their loaders. Loader options
+        (``table``/``query`` for databases, ``format_hint`` for URLs) are read
+        from the pipeline context or its ``data`` sub-dict.
+        """
+        opts = {**context.get("data", {}), **context}
+
+        if source_type == "url":
+            return self._engine.load_from_url(str(source), format_hint=opts.get("format_hint"))
+
+        if source_type == "database":
+            return self._engine.load_from_database(
+                str(source), table=opts.get("table"), query=opts.get("query")
+            )
+
+        # Default: file / upload.
+        self._validate_raw_headers(source)
+        return self._engine.load(source)
 
     def _validate_raw_headers(self, source: str | Path | UploadFile) -> None:
         """Inspect raw headers before Pandas normalizes duplicate column names."""
