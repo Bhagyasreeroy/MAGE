@@ -63,7 +63,7 @@ class TestRunPersistence:
         assert body["dataset_id"]
         assert body["run_id"]
 
-        ingestion_step = next(s for s in body["steps"] if s["agent"] == "IngestionAgent")
+        ingestion_step = next(s for s in body["steps"] if s["agent_name"] == "IngestionAgent")
         assert ingestion_step["status"] == "success"
         assert ingestion_step["output"]["row_count"] == 4
 
@@ -88,7 +88,7 @@ class TestRunPersistence:
             },
         ).json()
 
-        ingestion_step = next(s for s in second["steps"] if s["agent"] == "IngestionAgent")
+        ingestion_step = next(s for s in second["steps"] if s["agent_name"] == "IngestionAgent")
         assert ingestion_step["status"] == "success"
         assert ingestion_step["output"]["row_count"] == 4
         assert second["dataset_id"] == first["dataset_id"]
@@ -118,7 +118,7 @@ class TestRunPersistence:
             },
         ).json()
 
-        ingestion_step = next(s for s in run_b["steps"] if s["agent"] == "IngestionAgent")
+        ingestion_step = next(s for s in run_b["steps"] if s["agent_name"] == "IngestionAgent")
         assert ingestion_step["status"] == "error"
 
         client.delete("/auth/me", headers=headers_a)
