@@ -119,8 +119,15 @@ async def login(
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
 
+    # If user signed up via Google they have no password — tell them clearly
+    if user is not None and user.auth_provider != "local":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"This account uses {user.auth_provider.capitalize()} Sign-In. Please use that button instead.",
+        )
+
     # Generic message — don't reveal whether the email exists
-    if user is None or not verify_password(body.password, user.hashed_password):
+    if user is None or not verify_password(body.password, user.hashed_password or ""):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",

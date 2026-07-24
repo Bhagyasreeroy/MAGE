@@ -11,10 +11,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 
 from backend.core.config import settings
 from backend.core.database import init_db
-from backend.routers import health, analysis, auth
+from backend.routers import health, analysis, auth, oauth
 
 
 @asynccontextmanager
@@ -39,6 +40,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ── Middleware ────────────────────────────────────────────────────────────────
+# SessionMiddleware must be added first — authlib needs it for OAuth state
+app.add_middleware(SessionMiddleware, secret_key=settings.session_secret_key)
+
 # ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
@@ -52,6 +57,7 @@ app.add_middleware(
 app.include_router(health.router, tags=["Health"])
 app.include_router(analysis.router, prefix="/analysis", tags=["Analysis"])
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+app.include_router(oauth.router, prefix="/auth", tags=["Authentication"])
 
 
 if __name__ == "__main__":

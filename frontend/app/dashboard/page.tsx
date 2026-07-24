@@ -2,13 +2,8 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import {
-  fetchAnalysisHistory,
-  fetchCurrentUser,
-  fetchDatasets,
-  type AnalysisRunSummary,
-  type UserProfile,
-} from '../lib/api';
+import { fetchAnalysisHistory, fetchDatasets, type AnalysisRunSummary } from '../lib/api';
+import { useAuth } from '../lib/auth-context';
 
 const ChartIcon = () => (
   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -47,12 +42,12 @@ const UploadIcon = () => (
 );
 
 export default function DashboardPage() {
-  const [user, setUser] = useState<UserProfile | null>(null);
+  const { user } = useAuth();
+  const firstName = user?.full_name.split(' ')[0] ?? '';
   const [allRuns, setAllRuns] = useState<AnalysisRunSummary[]>([]);
   const [datasetCount, setDatasetCount] = useState<number | null>(null);
 
   useEffect(() => {
-    fetchCurrentUser().then(setUser).catch(() => {});
     fetchAnalysisHistory().then(setAllRuns).catch(() => {});
     fetchDatasets()
       .then((datasets) => setDatasetCount(datasets.length))
@@ -67,7 +62,7 @@ export default function DashboardPage() {
       {/* ── Welcome ────────────────────────────────────────────────── */}
       <div className="mb-12 animate-fade-in">
         <h1 className="font-[family-name:var(--font-serif)] text-4xl font-bold text-navy mb-2">
-          Welcome back{user?.full_name ? `, ${user.full_name}` : ''}
+          Welcome back, {firstName}
         </h1>
         <p className="text-navy/50 text-lg font-light">
           Here&apos;s what&apos;s happening with your analyses.

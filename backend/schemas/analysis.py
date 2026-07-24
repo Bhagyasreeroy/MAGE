@@ -27,6 +27,65 @@ class ExpertiseLevel(str, Enum):
     expert = "expert"
 
 
+class TaskType(str, Enum):
+    """
+    Analytical task type inferred from the user's natural-language goal.
+
+    The orchestrator uses this to build a *conditional* analysis pipeline —
+    the task type decides which computations are prioritized and run, not
+    merely which results are surfaced (Module 2, FR-02).
+    """
+
+    classification = "classification"
+    regression = "regression"
+    clustering = "clustering"
+    anomaly_detection = "anomaly_detection"
+    reporting = "reporting"
+
+
+class GoalClassification(BaseModel):
+    """Result of classifying a natural-language goal into a task type."""
+
+    task_type: TaskType = Field(
+        ...,
+        description="Inferred analytical task type driving the conditional pipeline.",
+    )
+    target_column: str | None = Field(
+        default=None,
+        description="Best-guess target/label column, when the goal implies one.",
+    )
+    confidence: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Classifier confidence in the inferred task type (0-1).",
+    )
+    rationale: str = Field(
+        default="",
+        description="Short human-readable justification for the classification.",
+    )
+
+
+class ReActStep(BaseModel):
+    """
+    A single Reason-Act-Observe step in the orchestrator loop.
+
+    Field names mirror the `agent_steps` table in the system design so the
+    step log is the complete, inspectable explainability trail (FR-06).
+    """
+
+    agent_name: str = Field(..., description="Specialist agent invoked in this step.")
+    action: str = Field(..., description="The action taken (e.g. 'run mining with directives').")
+    reasoning: str = Field(default="", description="Why the orchestrator chose this step now.")
+    observation: str = Field(default="", description="Short summary of what the step produced.")
+    status: str = Field(..., description="Step execution status ('success' | 'error' | 'skipped').")
+    latency_ms: int = Field(default=0, ge=0, description="Wall-clock duration of the step in ms.")
+    output: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Structured agent output payload for downstream consumers.",
+    )
+
+
 class AnalysisRequest(BaseModel):
     """Payload sent by the frontend to trigger an EDA pipeline run."""
 
@@ -116,9 +175,17 @@ class AnalysisResponse(BaseModel):
 
     goal: str = Field(..., description="Echo of the original analytical goal.")
     expertise_level: ExpertiseLevel
-    steps: list[StepResult] = Field(
+    task_type: TaskType | None = Field(
+        default=None,
+        description="Task type inferred from the goal, driving the conditional pipeline.",
+    )
+    classification: GoalClassification | None = Field(
+        default=None,
+        description="Full goal-classification detail (task type, target, confidence, rationale).",
+    )
+    steps: list[ReActStep] = Field(
         default_factory=list,
-        description="Ordered results from each specialist agent.",
+        description="Ordered Reason-Act-Observe step log — the explainability trail.",
     )
     recommendations: list[str] = Field(
         default_factory=list,
