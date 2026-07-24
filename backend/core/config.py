@@ -34,9 +34,7 @@ class Settings(BaseSettings):
     # ── Vector Store ───────────────────────────────────────────────────────
     vector_store_backend: str = "chroma"  # "chroma" | "faiss"
     faiss_index_path: str = "./data/faiss_index"
-    chroma_db_path: str = "./data/chroma_db"
-    chroma_host: str = "chromadb"
-    chroma_port: int = 8001
+    chroma_db_path: str = "./data/chroma_db"  # Chroma runs embedded (PersistentClient); no host/port needed
 
     # ── Data Pipeline ──────────────────────────────────────────────────────
     max_upload_size_mb: int = 100
