@@ -316,8 +316,16 @@ export default function AnalysisResultPage() {
             <div className="mb-8">
               <h3 className="text-xs font-bold text-navy/40 uppercase tracking-widest mb-3">Visualizations</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                {specs.map((spec, idx) => (
-                  <div key={idx} className="bg-cream/40 border border-dusty-rose/15 rounded-2xl p-5">
+                {specs.map((spec, idx) => {
+                  // Wide chart types (many columns/labels) get the full row so
+                  // they have room to breathe instead of being squeezed into
+                  // a half-width column and overflowing it.
+                  const isWide = spec.type === 'correlation_heatmap' || spec.type === 'cluster_scatter';
+                  return (
+                  <div
+                    key={idx}
+                    className={`bg-cream/40 border border-dusty-rose/15 rounded-2xl p-5 min-w-0 overflow-hidden ${isWide ? 'md:col-span-2' : ''}`}
+                  >
                     <p className="text-xs font-bold text-navy mb-3">{spec.title}</p>
                     {spec.type === 'histogram' && <Histogram bins={spec.bins as { label: string; count: number }[]} />}
                     {spec.type === 'bar' && <BarChart items={spec.items as { label: string; value: number }[]} />}
@@ -343,7 +351,8 @@ export default function AnalysisResultPage() {
                       <ClusterScatter points={spec.points as { x: number; y: number; cluster: number }[]} />
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           );
