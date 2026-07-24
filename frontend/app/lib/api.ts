@@ -56,6 +56,10 @@ export function storeTokens(access: string, refresh?: string): void {
  */
 export function storeAccessTokenOnly(access: string): void {
   localStorage.setItem("mage_access_token", access);
+  // Also write the cookie so Next.js middleware recognizes the session —
+  // without this, the OAuth redirect lands on /dashboard, the guard sees no
+  // cookie, and bounces back to /signin?from=/dashboard.
+  document.cookie = `mage_token=${access}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
 }
 
 export function clearTokens(): void {

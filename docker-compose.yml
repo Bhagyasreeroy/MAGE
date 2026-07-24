@@ -34,6 +34,11 @@ services:
       - PROCESSING_ENGINE=${PROCESSING_ENGINE:-pandas}
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-mage}:${POSTGRES_PASSWORD:-mage}@postgres:5432/${POSTGRES_DB:-mage}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-CHANGE-ME-IN-PRODUCTION-use-openssl-rand-hex-32}
+      # Session + Google OAuth (interpolated from the host .env)
+      - SESSION_SECRET_KEY=${SESSION_SECRET_KEY:-CHANGE-ME-SESSION-SECRET}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
     volumes:
       - ./data:/app/data
     depends_on:
