@@ -44,17 +44,20 @@ class TestPipelinePlanner:
         # Every task type must ask mining to run a distinct computation set.
         assert len(set(comps.values())) == len(TaskType)
 
-    def test_reporting_skips_visualization(self, planner) -> None:
-        plan = planner.build_plan(TaskType.reporting)
-        assert VISUALIZATION not in [s.agent_name for s in plan]
-
-    @pytest.mark.parametrize(
-        "task_type",
-        [t for t in TaskType if t != TaskType.reporting],
-    )
-    def test_non_reporting_includes_visualization(self, planner, task_type) -> None:
+    @pytest.mark.parametrize("task_type", list(TaskType))
+    def test_every_task_type_includes_visualization(self, planner, task_type) -> None:
+        """Every task type — including reporting — gets a conditioned chart
+        step; only the chart set itself varies by goal (see _VIZ_DIRECTIVES)."""
         plan = planner.build_plan(task_type)
         assert VISUALIZATION in [s.agent_name for s in plan]
+
+    def test_visualization_directives_differ_by_task_type(self, planner) -> None:
+        charts = {}
+        for task_type in TaskType:
+            plan = planner.build_plan(task_type)
+            viz = next(s for s in plan if s.agent_name == VISUALIZATION)
+            charts[task_type] = tuple(viz.directives.get("charts", []))
+        assert len(set(charts.values())) == len(TaskType)
 
     def test_target_column_threaded_into_mining(self, planner) -> None:
         plan = planner.build_plan(TaskType.classification, target_column="churn")

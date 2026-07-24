@@ -122,16 +122,15 @@ class PipelinePlanner:
             ),
         ]
 
-        # Reporting is text-first; every other task type gets a conditioned
-        # visualization step. This is a visible pipeline difference by goal.
-        if task_type != TaskType.reporting:
-            steps.append(
-                PlannedStep(
-                    agent_name=VISUALIZATION,
-                    directives={"task_type": task_type.value, **_VIZ_DIRECTIVES.get(task_type, {})},
-                    reason=f"Generate {task_type.value}-appropriate charts.",
-                )
+        # Every task type — including reporting — gets a conditioned
+        # visualization step; the chart set itself is what varies by goal.
+        steps.append(
+            PlannedStep(
+                agent_name=VISUALIZATION,
+                directives={"task_type": task_type.value, **_VIZ_DIRECTIVES.get(task_type, {})},
+                reason=f"Generate {task_type.value}-appropriate charts.",
             )
+        )
 
         steps.append(
             PlannedStep(
