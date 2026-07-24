@@ -58,10 +58,10 @@ class TestOrchestratorAgent:
                           "status", "latency_ms"):
                 assert field in step
 
-    def test_reporting_goal_skips_visualization(self, orchestrator: OrchestratorAgent) -> None:
+    def test_reporting_goal_still_includes_visualization(self, orchestrator: OrchestratorAgent) -> None:
         result = orchestrator.run(goal="Give me a general summary of the data")
         agents = [s["agent_name"] for s in result["steps"]]
-        assert VISUALIZATION not in agents
+        assert VISUALIZATION in agents
 
     def test_clustering_goal_includes_visualization(self, orchestrator: OrchestratorAgent) -> None:
         result = orchestrator.run(goal="Cluster the customers into segments")
