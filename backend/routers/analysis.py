@@ -4,6 +4,8 @@ Analysis endpoints - run the goal-conditioned pipeline and ingest tabular files.
 Endpoints:
     POST /analysis/run              - trigger a full MAGE analysis pipeline run
     POST /analysis/ingest           - upload a CSV or XLSX file and profile it
+    GET  /analysis/sample-datasets  - list bundled demo datasets
+    POST /analysis/sample-datasets/{filename}/load - ingest a bundled demo dataset
     GET  /analysis/knowledge-sources - list the RAG knowledge base documents
     GET  /analysis/history          - list the current user's past analysis runs
     GET  /analysis/history/{run_id} - fetch one past run in full
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 import io
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import Response
@@ -37,6 +40,7 @@ from backend.schemas.analysis import (
     ExpertiseLevel,
     IngestionResult,
     KnowledgeSource,
+    SampleDataset,
 )
 from backend.schemas.auth import MessageResponse
 from backend.services import analysis_run_service, dataset_service, export_service
@@ -49,6 +53,24 @@ router = APIRouter()
 
 _orchestrator_service = OrchestratorService()
 _ingestion_agent = IngestionAgent()
+
+# Bundled demo datasets a user can load without having the file on their own
+# machine. Keyed by filename in data/samples/; anything in that directory but
+# not listed here is just generator scratch output, not meant to be surfaced.
+SAMPLES_DIR = Path(__file__).resolve().parents[2] / "data" / "samples"
+_SAMPLE_DATASET_REGISTRY: dict[str, tuple[str, str]] = {
+    # filename -> (title, description)
+    "customer_orders.csv": (
+        "Customer Orders",
+        "60 orders across 2 customer segments — clean correlation (units × price → "
+        "revenue), a few injected outliers, and a churn label for classification goals.",
+    ),
+    "saas_customers.csv": (
+        "SaaS Customers",
+        "150 SaaS subscription customers across 3 tiers — real cluster structure, "
+        "linear MRR correlation, injected anomalies, missing values, and a churn label.",
+    ),
+}
 
 
 @router.post(
@@ -145,6 +167,70 @@ async def ingest_file(
         db,
         current_user.id,
         file.filename or "dataset",
+        content,
+        row_count=result.row_count,
+        column_count=result.column_count,
+    )
+    result.dataset_id = dataset.id
+    return result
+
+
+@router.get(
+    "/sample-datasets",
+    response_model=list[SampleDataset],
+    status_code=status.HTTP_200_OK,
+    summary="List bundled demo datasets",
+)
+async def list_sample_datasets() -> list[SampleDataset]:
+    """Datasets shipped in the repo for demoing MAGE without a file of your own."""
+    out: list[SampleDataset] = []
+    for filename, (title, description) in _SAMPLE_DATASET_REGISTRY.items():
+        path = SAMPLES_DIR / filename
+        if not path.is_file():
+            continue
+        out.append(
+            SampleDataset(
+                filename=filename,
+                title=title,
+                description=description,
+                size_kb=round(path.stat().st_size / 1024, 1),
+            )
+        )
+    return out
+
+
+@router.post(
+    "/sample-datasets/{filename}/load",
+    response_model=IngestionResult,
+    status_code=status.HTTP_200_OK,
+    summary="Ingest a bundled demo dataset and save it to your account",
+)
+async def load_sample_dataset(
+    filename: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> IngestionResult:
+    """Same ingest-and-persist path as /ingest, sourced from data/samples/
+    instead of an upload — so a demo dataset behaves exactly like one the
+    user picked from their own machine (own dataset_id, own history)."""
+    if filename not in _SAMPLE_DATASET_REGISTRY:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown sample dataset.")
+    path = SAMPLES_DIR / filename
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sample dataset file is missing.")
+
+    content = path.read_bytes()
+    source = dataset_service.StoredFile(filename=filename, file=io.BytesIO(content))
+    try:
+        result = _ingestion_agent.run(source=source)
+    except IngestionError as exc:
+        logger.info("Sample ingestion failed: %s", exc)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    dataset = await dataset_service.save_dataset(
+        db,
+        current_user.id,
+        filename,
         content,
         row_count=result.row_count,
         column_count=result.column_count,

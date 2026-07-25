@@ -216,6 +216,13 @@ export interface AnalysisRunSummary {
   created_at: string;
 }
 
+export interface SampleDataset {
+  filename: string;
+  title: string;
+  description: string;
+  size_kb: number;
+}
+
 export interface DatasetSummary {
   id: string;
   filename: string;
@@ -284,6 +291,17 @@ export async function fetchAnalysisRun(runId: string): Promise<unknown> {
 
 export async function fetchDatasets(): Promise<DatasetSummary[]> {
   return apiFetch<DatasetSummary[]>("/analysis/datasets", { auth: true });
+}
+
+export async function fetchSampleDatasets(): Promise<SampleDataset[]> {
+  return apiFetch<SampleDataset[]>("/analysis/sample-datasets", { auth: true });
+}
+
+export async function loadSampleDataset(filename: string): Promise<{ dataset_id: string | null }> {
+  return apiFetch(`/analysis/sample-datasets/${encodeURIComponent(filename)}/load`, {
+    method: "POST",
+    auth: true,
+  });
 }
 
 export async function deleteDataset(datasetId: string): Promise<void> {
