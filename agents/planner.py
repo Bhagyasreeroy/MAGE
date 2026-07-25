@@ -64,7 +64,14 @@ _MINING_DIRECTIVES: dict[TaskType, dict[str, Any]] = {
         "priority": "isolation_forest",
     },
     TaskType.reporting: {
-        "computations": ["descriptive_profile", "missingness", "distribution"],
+        # This is the fallback for broad, unfocused goals ("describe this
+        # dataset", "give me an overview") — there's no specific angle to
+        # narrow the analysis to, so it should be the *richest* profile, not
+        # the leanest. Previously this only computed descriptive stats and
+        # missingness, which left the visualization step with nothing to
+        # build a heatmap/outlier/importance chart from — the most common
+        # goal type produced the sparsest results.
+        "computations": ["descriptive_profile", "missingness", "distribution", "correlation", "feature_importance", "iqr_outliers"],
         "priority": "descriptive_profile",
     },
 }
@@ -74,7 +81,9 @@ _VIZ_DIRECTIVES: dict[TaskType, dict[str, Any]] = {
     TaskType.regression: {"charts": ["scatter", "correlation_heatmap"]},
     TaskType.clustering: {"charts": ["cluster_scatter", "pairplot"]},
     TaskType.anomaly_detection: {"charts": ["box", "highlighted_scatter"]},
-    TaskType.reporting: {"charts": ["histograms", "missingness_matrix"]},
+    TaskType.reporting: {
+        "charts": ["histograms", "missingness_matrix", "correlation_heatmap", "feature_importance", "box", "grouped_bar"]
+    },
 }
 
 
