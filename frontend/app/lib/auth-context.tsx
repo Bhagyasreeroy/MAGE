@@ -12,16 +12,17 @@ import {
   fetchCurrentUser,
   getAccessToken,
   logout as clearSession,
-  storeAccessTokenOnly,
+  storeTokens,
   type UserProfile,
 } from './api';
 
 /**
  * The Google OAuth callback (backend/routers/oauth.py) redirects to
- * `/dashboard?token=<jwt>` rather than going through loginUser(), since it
- * issues the token itself instead of the frontend submitting credentials.
- * Pick that token up here so an OAuth sign-in actually results in a stored
- * session, then strip it from the URL so it doesn't linger in history.
+ * `/dashboard?token=<jwt>&refresh_token=<jwt>` rather than going through
+ * loginUser(), since it issues the tokens itself instead of the frontend
+ * submitting credentials. Pick them up here so an OAuth sign-in actually
+ * results in a stored, refreshable session, then strip them from the URL
+ * so they don't linger in history.
  */
 function consumeOAuthTokenFromUrl(): void {
   if (typeof window === 'undefined') return;
@@ -29,8 +30,9 @@ function consumeOAuthTokenFromUrl(): void {
   const token = params.get('token');
   if (!token) return;
 
-  storeAccessTokenOnly(token);
+  storeTokens(token, params.get('refresh_token') ?? undefined);
   params.delete('token');
+  params.delete('refresh_token');
   const query = params.toString();
   window.history.replaceState({}, '', window.location.pathname + (query ? `?${query}` : ''));
 }

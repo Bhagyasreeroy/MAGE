@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.database import get_db
-from backend.core.security import create_access_token
+from backend.core.security import create_access_token, create_refresh_token
 from backend.core.config import settings
 from backend.models.user import User
 
@@ -125,7 +125,14 @@ async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account is deactivated")
 
-    # ── Step 4: Issue MAGE JWT and redirect ───────────────────────────────
+    # ── Step 4: Issue MAGE JWT + refresh token, and redirect ───────────────
+    # Without a refresh token, a Google-signed-in session silently dies the
+    # moment the 30-minute access token expires — every request 401s and
+    # there's no recovery short of a full re-login. Issue both, same as the
+    # email/password flow.
     mage_token = create_access_token(subject=user.id)
+    refresh_token = create_refresh_token(subject=user.id)
     frontend_url = settings.frontend_url
-    return RedirectResponse(url=f"{frontend_url}/auth-callback?token={mage_token}")
+    return RedirectResponse(
+        url=f"{frontend_url}/auth-callback?token={mage_token}&refresh_token={refresh_token}"
+    )
