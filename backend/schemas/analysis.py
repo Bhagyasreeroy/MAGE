@@ -161,6 +161,16 @@ class IngestionResult(BaseModel):
     )
 
 
+class SampleDataset(BaseModel):
+    """A bundled demo dataset in data/samples/, selectable from New Analysis
+    without the user needing the file on their own machine."""
+
+    filename: str = Field(..., description="File name within data/samples/, used to request loading it.")
+    title: str = Field(..., description="Human-readable name shown in the picker.")
+    description: str = Field(..., description="What the dataset demonstrates (clusters, outliers, etc.).")
+    size_kb: float = Field(..., description="File size in kilobytes.")
+
+
 class KnowledgeSource(BaseModel):
     """A single document in the RAG knowledge base."""
 
