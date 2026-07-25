@@ -48,20 +48,6 @@ export function storeTokens(access: string, refresh?: string): void {
   document.cookie = `mage_token=${access}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
 }
 
-/**
- * Store an access token without a refresh token — used for the OAuth
- * redirect flow, where the backend only issues a MAGE access token
- * (see backend/routers/oauth.py). A session started this way won't
- * auto-refresh on 401 and will require a full re-login once it expires.
- */
-export function storeAccessTokenOnly(access: string): void {
-  localStorage.setItem("mage_access_token", access);
-  // Also write the cookie so Next.js middleware recognizes the session —
-  // without this, the OAuth redirect lands on /dashboard, the guard sees no
-  // cookie, and bounces back to /signin?from=/dashboard.
-  document.cookie = `mage_token=${access}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
-}
-
 export function clearTokens(): void {
   localStorage.removeItem("mage_access_token");
   localStorage.removeItem("mage_refresh_token");
