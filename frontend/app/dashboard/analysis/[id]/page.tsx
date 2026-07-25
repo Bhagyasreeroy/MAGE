@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { authFetchFormData, downloadAuthenticatedFile, fetchAnalysisRun } from '../../../lib/api';
-import { BarChart, BoxPlot, ClusterScatter, CorrelationHeatmap, Histogram } from '../../../components/charts';
+import { BarChart, BoxPlot, ClusterScatter, CorrelationHeatmap, Histogram, ScatterPlot } from '../../../components/charts';
 import { Markdown } from '../../../components/markdown';
 
 interface StepResult {
@@ -354,7 +354,10 @@ export default function AnalysisResultPage() {
                   // Wide chart types (many columns/labels) get the full row so
                   // they have room to breathe instead of being squeezed into
                   // a half-width column and overflowing it.
-                  const isWide = spec.type === 'correlation_heatmap' || spec.type === 'cluster_scatter';
+                  const isWide =
+                    spec.type === 'correlation_heatmap' ||
+                    spec.type === 'cluster_scatter' ||
+                    spec.type === 'scatter';
                   return (
                   <div
                     key={idx}
@@ -362,9 +365,15 @@ export default function AnalysisResultPage() {
                   >
                     <p className="text-xs font-bold text-navy mb-3">{spec.title}</p>
                     {spec.type === 'histogram' && <Histogram bins={spec.bins as { label: string; count: number }[]} />}
-                    {spec.type === 'bar' && <BarChart items={spec.items as { label: string; value: number }[]} />}
-                    {spec.type === 'feature_importance' && (
+                    {(spec.type === 'bar' || spec.type === 'feature_importance' || spec.type === 'missingness_matrix') && (
                       <BarChart items={spec.items as { label: string; value: number }[]} />
+                    )}
+                    {spec.type === 'scatter' && (
+                      <ScatterPlot
+                        points={spec.points as { x: number; y: number }[]}
+                        xLabel={spec.x_label as string | undefined}
+                        yLabel={spec.y_label as string | undefined}
+                      />
                     )}
                     {spec.type === 'boxplot' && (
                       <BoxPlot

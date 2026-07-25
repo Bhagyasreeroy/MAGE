@@ -150,6 +150,49 @@ export function CorrelationHeatmap({ columns, matrix }: { columns: string[]; mat
   );
 }
 
+export function ScatterPlot({
+  points,
+  xLabel,
+  yLabel,
+}: {
+  points: { x: number; y: number }[];
+  xLabel?: string;
+  yLabel?: string;
+}) {
+  if (points.length === 0) {
+    return <p className="text-xs text-navy/40">Not enough data for a scatter plot.</p>;
+  }
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  const [minX, maxX] = [Math.min(...xs), Math.max(...xs)];
+  const [minY, maxY] = [Math.min(...ys), Math.max(...ys)];
+  const rangeX = maxX - minX || 1;
+  const rangeY = maxY - minY || 1;
+
+  return (
+    <div className="w-full min-w-0">
+      <svg viewBox="0 0 100 100" className="w-full h-80 max-w-full bg-cream/40 rounded-xl">
+        {points.map((p, i) => (
+          <circle
+            key={i}
+            cx={((p.x - minX) / rangeX) * 90 + 5}
+            cy={90 - ((p.y - minY) / rangeY) * 90 + 5}
+            r="1.2"
+            fill="#22223b"
+            opacity="0.6"
+          />
+        ))}
+      </svg>
+      {(xLabel || yLabel) && (
+        <div className="flex justify-between text-[10px] text-navy/40 mt-1.5">
+          <span>{yLabel ? `↑ ${yLabel}` : ''}</span>
+          <span>{xLabel ? `${xLabel} →` : ''}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ClusterScatter({ points }: { points: { x: number; y: number; cluster: number }[] }) {
   const xs = points.map((p) => p.x);
   const ys = points.map((p) => p.y);
