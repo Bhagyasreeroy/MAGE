@@ -83,17 +83,46 @@ export function BoxPlot({
   if (min == null || q1 == null || median == null || q3 == null || max == null) {
     return <p className="text-xs text-navy/40">Not enough data for a box plot.</p>;
   }
-  const range = max - min || 1;
-  const pct = (v: number) => ((v - min) / range) * 100;
+
+  // A handful of extreme outliers (the exact thing this chart exists to
+  // surface) can be 10-100x the IQR on a raw min-max linear scale — the box
+  // itself collapses to a sliver of a pixel and the chart reads as a blank
+  // line. Scale to the Tukey whisker range (median ± 1.5 IQR, clamped to the
+  // real data) instead, and draw anything beyond that as a marker at the
+  // edge rather than stretching the axis to fit it.
+  const iqr = q3 - q1;
+  const whiskerLow = Math.max(min, q1 - 1.5 * iqr);
+  const whiskerHigh = Math.min(max, q3 + 1.5 * iqr);
+  const domainMin = whiskerLow < whiskerHigh ? whiskerLow : min;
+  const domainMax = whiskerLow < whiskerHigh ? whiskerHigh : max;
+  const domainRange = domainMax - domainMin || 1;
+
+  const hasLowOutlier = min < domainMin;
+  const hasHighOutlier = max > domainMax;
+  // Leave room at the edges (0-8 / 92-100) for outlier markers.
+  const pct = (v: number) => {
+    const clamped = Math.min(domainMax, Math.max(domainMin, v));
+    return ((clamped - domainMin) / domainRange) * 84 + 8;
+  };
 
   return (
     <div className="py-4 w-full min-w-0">
       <svg viewBox="0 0 100 20" className="w-full h-20" preserveAspectRatio="none">
-        <line x1={pct(min)} y1="10" x2={pct(max)} y2="10" stroke="#9a8c98" strokeWidth="0.5" />
-        <rect x={pct(q1)} y="4" width={pct(q3) - pct(q1)} height="12" fill="#22223b" opacity="0.7" />
+        <line x1={pct(domainMin)} y1="10" x2={pct(domainMax)} y2="10" stroke="#9a8c98" strokeWidth="0.5" />
+        <rect x={pct(q1)} y="4" width={Math.max(0.5, pct(q3) - pct(q1))} height="12" fill="#22223b" opacity="0.7" />
         <line x1={pct(median)} y1="2" x2={pct(median)} y2="18" stroke="#f2e9e4" strokeWidth="0.8" />
-        <line x1={pct(min)} y1="6" x2={pct(min)} y2="14" stroke="#9a8c98" strokeWidth="0.5" />
-        <line x1={pct(max)} y1="6" x2={pct(max)} y2="14" stroke="#9a8c98" strokeWidth="0.5" />
+        <line x1={pct(domainMin)} y1="6" x2={pct(domainMin)} y2="14" stroke="#9a8c98" strokeWidth="0.5" />
+        <line x1={pct(domainMax)} y1="6" x2={pct(domainMax)} y2="14" stroke="#9a8c98" strokeWidth="0.5" />
+        {hasLowOutlier && (
+          <circle cx="2.5" cy="10" r="1.4" fill="#c73e1d" opacity="0.85">
+            <title>{`Outlier(s) down to ${min.toFixed(2)}`}</title>
+          </circle>
+        )}
+        {hasHighOutlier && (
+          <circle cx="97.5" cy="10" r="1.4" fill="#c73e1d" opacity="0.85">
+            <title>{`Outlier(s) up to ${max.toFixed(2)}`}</title>
+          </circle>
+        )}
       </svg>
       <div className="flex justify-between text-xs text-navy/40 font-mono mt-2">
         <span>min {min.toFixed(1)}</span>
