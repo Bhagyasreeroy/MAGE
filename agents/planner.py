@@ -55,7 +55,12 @@ _MINING_DIRECTIVES: dict[TaskType, dict[str, Any]] = {
         "priority": "kmeans",
     },
     TaskType.anomaly_detection: {
-        "computations": ["iqr_outliers", "isolation_forest", "distribution_tails"],
+        # "correlation" is here for the viz layer, not the analysis itself:
+        # the anomaly_detection chart directive below asks for a
+        # "highlighted_scatter", and VisualizationAgent picks that scatter's
+        # column pair from the correlation matrix — without it the chart
+        # silently can't be built and the directive quietly drops it.
+        "computations": ["iqr_outliers", "isolation_forest", "distribution_tails", "correlation"],
         "priority": "isolation_forest",
     },
     TaskType.reporting: {
