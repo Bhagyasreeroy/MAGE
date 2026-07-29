@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  clearTokens,
   fetchCurrentUser,
   getAccessToken,
   logout as clearSession,
@@ -70,7 +71,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!cancelled) setUser(profile);
       })
       .catch(() => {
-        if (!cancelled) router.replace('/signin');
+        // The token was rejected (expired, revoked, or the account no
+        // longer exists) — clear it before redirecting. Otherwise the
+        // mage_token cookie survives, and the middleware (which only checks
+        // the cookie's presence, not its validity) bounces /signin straight
+        // back to /dashboard, which fetches the user again and loops.
+        if (!cancelled) {
+          clearTokens();
+          router.replace('/signin');
+        }
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);

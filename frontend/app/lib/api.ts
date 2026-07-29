@@ -134,7 +134,14 @@ async function fetchWithAuthRetry(
 
 async function tryRefreshToken(): Promise<boolean> {
   const refreshToken = getRefreshToken();
-  if (!refreshToken) return false;
+  if (!refreshToken) {
+    // No refresh token to try (e.g. a Google OAuth session, which never
+    // gets one — see storeAccessTokenOnly). Clear the dead access token
+    // too, or the mage_token cookie lingers and the middleware keeps
+    // bouncing /signin back to /dashboard forever.
+    clearTokens();
+    return false;
+  }
 
   try {
     const res = await fetch(`${API_BASE}/auth/refresh`, {
