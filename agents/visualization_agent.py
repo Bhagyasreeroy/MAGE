@@ -133,6 +133,11 @@ class VisualizationAgent:
             elif chart in ("feature_importance",):
                 spec = self._feature_importance_spec(mining)
                 built = [spec] if spec else []
+            elif chart in ("feature_attribution", "shap"):
+                # Falls back to the PCA ranking when attribution did not run
+                # (no usable target), so the slot is never left empty.
+                spec = self._feature_attribution_spec(mining) or self._feature_importance_spec(mining)
+                built = [spec] if spec else []
 
             for spec in built:
                 # De-dup by (type, title) so repeated directives don't stack.
@@ -175,6 +180,27 @@ class VisualizationAgent:
             "type": "feature_importance",
             "title": "Feature Importance (PCA loading)",
             "items": [{"label": f["feature"], "value": f["score"]} for f in feature_importance],
+        }
+
+    def _feature_attribution_spec(self, mining: dict[str, Any]) -> dict[str, Any] | None:
+        """
+        Bar chart of supervised feature attribution (SHAP).
+
+        Reuses the ``feature_importance`` render type — the frontend and the PDF
+        exporter both already draw it — but carries a distinct title naming the
+        target and the method, so it is never mistaken for the unsupervised
+        PCA ranking sitting next to it in the same report.
+        """
+        attribution = mining.get("feature_attribution") or {}
+        items = attribution.get("attributions") or []
+        if not items:
+            return None
+        method = attribution.get("method", "attribution")
+        target = attribution.get("target", "target")
+        return {
+            "type": "feature_importance",
+            "title": f"Feature Attribution for '{target}' ({method})",
+            "items": [{"label": f["feature"], "value": f["score"]} for f in items],
         }
 
     def _scatter_spec(self, df: pd.DataFrame, mining: dict[str, Any]) -> dict[str, Any] | None:
