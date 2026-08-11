@@ -59,6 +59,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     consumeOAuthTokenFromUrl();
 
     if (!getAccessToken()) {
+      // Clear any stale mage_token cookie too, otherwise the middleware
+      // bounces /signin back to /dashboard and we loop forever.
+      clearSession();
       router.replace('/signin');
       return;
     }
@@ -68,7 +71,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!cancelled) setUser(profile);
       })
       .catch(() => {
-        if (!cancelled) router.replace('/signin');
+        // Token was rejected (e.g. expired). Clear both the localStorage token
+        // and the cookie before redirecting, so the route guard doesn't send
+        // us straight back here — the cause of the infinite loading spinner.
+        if (!cancelled) {
+          clearSession();
+          router.replace('/signin');
+        }
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
