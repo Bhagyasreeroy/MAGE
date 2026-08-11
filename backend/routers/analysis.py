@@ -3,6 +3,7 @@ Analysis endpoints - run the goal-conditioned pipeline and ingest tabular files.
 
 Endpoints:
     POST /analysis/run              - trigger a full MAGE analysis pipeline run
+    WS   /analysis/stream           - run the pipeline, streaming each agent step live
     POST /analysis/ingest           - upload a CSV or XLSX file and profile it
     GET  /analysis/knowledge-sources - list the RAG knowledge base documents
     GET  /analysis/history          - list the current user's past analysis runs
@@ -18,16 +19,31 @@ runs and datasets are scoped to the authenticated user.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
+from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.responses import Response
+from jose import JWTError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.ingestion_agent import IngestionAgent
-from backend.core.database import get_db
+from backend.core.database import async_session, get_db
 from backend.core.deps import get_current_user
+from backend.core.security import decode_token
 from backend.models.user import User
 from backend.schemas.analysis import (
     AnalysisRequest,
@@ -89,6 +105,211 @@ async def run_analysis(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Analysis failed: {exc}",
         ) from exc
+
+
+# ── Live streaming ───────────────────────────────────────────────────────────
+#
+# Application-defined WebSocket close codes. The 4000-4999 range is reserved
+# for private use by RFC 6455, so these will never collide with protocol codes.
+WS_UNAUTHORIZED = 4401
+WS_BAD_REQUEST = 4400
+WS_INTERNAL_ERROR = 4500
+
+# Polling interval for the step queue while the pipeline thread works. Short
+# enough that steps appear immediately, long enough not to spin the event loop.
+_STREAM_POLL_SECONDS = 0.05
+
+
+async def _user_from_ws_token(token: str | None, db: AsyncSession) -> User | None:
+    """
+    Resolve a user from a JWT passed as a WebSocket query parameter.
+
+    The browser WebSocket API cannot set an Authorization header, so the token
+    travels as a query parameter instead — the standard workaround. This
+    mirrors ``get_current_user``'s checks exactly (valid signature, ``access``
+    token type, user exists and is active) rather than relaxing any of them;
+    only the transport differs.
+    """
+    if not token:
+        return None
+    try:
+        payload = decode_token(token)
+    except JWTError:
+        return None
+
+    user_id = payload.get("sub")
+    if user_id is None or payload.get("type") != "access":
+        return None
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None or not user.is_active:
+        return None
+    return user
+
+
+def _stream_safe_step(step: dict[str, Any], index: int) -> dict[str, Any]:
+    """
+    Shrink one step to what a live view actually renders.
+
+    The full ``output`` payload carries every statistic the MiningAgent
+    produced and can run to hundreds of kilobytes — pushing it per step would
+    make the stream slower than the analysis it is narrating. The complete,
+    unabridged result still arrives in the terminal ``complete`` message and is
+    what gets persisted, so nothing is lost.
+    """
+    return {
+        "type": "step",
+        "index": index,
+        "agent_name": step.get("agent_name"),
+        "action": step.get("action"),
+        "reasoning": step.get("reasoning"),
+        "observation": step.get("observation"),
+        "status": step.get("status"),
+        "latency_ms": step.get("latency_ms"),
+    }
+
+
+@router.websocket("/stream")
+async def stream_analysis(websocket: WebSocket, token: str | None = None) -> None:
+    """
+    Run the pipeline over a WebSocket, streaming each agent step as it completes.
+
+    Protocol
+    --------
+    Connect to ``/analysis/stream?token=<access_token>``, then send one JSON
+    message to start the run::
+
+        {"goal": "...", "expertise_level": "intermediate", "dataset_id": "..."}
+
+    The server then emits, in order::
+
+        {"type": "accepted", "goal": ...}
+        {"type": "step", "index": 0, "agent_name": "IngestionAgent", ...}
+        ...one per completed step...
+        {"type": "complete", "run_id": ..., "result": {...}}
+
+    or ``{"type": "error", "detail": ...}`` followed by a close.
+
+    Datasets are referenced by ``dataset_id`` rather than uploaded over the
+    socket — the client uploads via ``POST /analysis/ingest`` first, which
+    already persists the file and returns its id.
+    """
+    # The session is opened explicitly rather than via ``Depends(get_db)``:
+    # FastAPI's yield-dependency teardown does not run reliably for WebSocket
+    # routes, so every connection that touched the database leaked its
+    # connection until SQLAlchemy's garbage collector reclaimed it. An explicit
+    # ``async with`` closes it deterministically when the socket is done.
+    async with async_session() as db:
+        await _stream_analysis(websocket, token, db)
+
+
+async def _stream_analysis(websocket: WebSocket, token: str | None, db: AsyncSession) -> None:
+    """Body of the streaming endpoint, with the DB session's lifetime fixed by the caller."""
+    user = await _user_from_ws_token(token, db)
+    if user is None:
+        # Accept before closing so the client receives a close *code* it can
+        # act on. Rejecting pre-accept yields a bare HTTP 403, which browsers
+        # surface as an indistinguishable connection error.
+        await websocket.accept()
+        await websocket.close(code=WS_UNAUTHORIZED, reason="Invalid or missing access token.")
+        return
+
+    await websocket.accept()
+
+    try:
+        payload = await websocket.receive_json()
+    except WebSocketDisconnect:
+        return
+    except Exception:  # noqa: BLE001 - malformed frame, not valid JSON
+        await websocket.close(code=WS_BAD_REQUEST, reason="Expected a JSON start message.")
+        return
+
+    goal = str(payload.get("goal") or "").strip()
+    if not goal:
+        await websocket.close(code=WS_BAD_REQUEST, reason="A non-empty 'goal' is required.")
+        return
+
+    try:
+        expertise = ExpertiseLevel(payload.get("expertise_level") or ExpertiseLevel.intermediate)
+    except ValueError:
+        await websocket.close(code=WS_BAD_REQUEST, reason="Unknown expertise_level.")
+        return
+
+    request = AnalysisRequest(goal=goal, expertise_level=expertise)
+    await websocket.send_json({"type": "accepted", "goal": goal, "expertise_level": expertise.value})
+
+    # Bridge the worker thread back to the event loop. `on_step` is invoked by
+    # the agent on the thread running the analysis, so it must not touch the
+    # socket directly — it hands each step to the loop via a thread-safe call
+    # and this coroutine does the sending.
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+    def on_step(step: dict[str, Any]) -> None:
+        loop.call_soon_threadsafe(queue.put_nowait, step)
+
+    run_task = asyncio.create_task(
+        _orchestrator_service.run(
+            request,
+            db=db,
+            user_id=user.id,
+            dataset_id=payload.get("dataset_id"),
+            on_step=on_step,
+        )
+    )
+
+    index = 0
+    try:
+        # Drain until the pipeline has finished *and* the queue is empty, so a
+        # step enqueued just before completion is never dropped.
+        while not (run_task.done() and queue.empty()):
+            try:
+                step = await asyncio.wait_for(queue.get(), timeout=_STREAM_POLL_SECONDS)
+            except asyncio.TimeoutError:
+                continue
+            await websocket.send_json(_stream_safe_step(step, index))
+            index += 1
+
+        result = await run_task
+        await websocket.send_json(
+            {"type": "complete", "run_id": result.run_id, "result": result.model_dump(mode="json")}
+        )
+    except WebSocketDisconnect:
+        # The client hung up. The run is left to finish so work already done
+        # still gets persisted — the `finally` below is what waits for it.
+        logger.info("Stream client disconnected; letting the run finish.")
+    except Exception as exc:  # noqa: BLE001 - report, then close cleanly
+        logger.exception("Streaming analysis failed: %s", exc)
+        try:
+            await websocket.send_json({"type": "error", "detail": f"Analysis failed: {exc}"})
+            await websocket.close(code=WS_INTERNAL_ERROR)
+        except Exception:  # noqa: BLE001 - socket may already be gone
+            pass
+    finally:
+        # The pipeline task holds the request-scoped `db` session. Returning
+        # while it is still running would let FastAPI tear that session down
+        # underneath it, orphaning the connection (SQLAlchemy then reclaims it
+        # via the garbage collector and warns). Settle the task first, always.
+        await _settle(run_task)
+
+    await _close_quietly(websocket)
+
+
+async def _settle(task: asyncio.Task) -> None:
+    """Wait for a task to finish, absorbing its result or failure."""
+    try:
+        await task
+    except Exception:  # noqa: BLE001 - already reported by the caller, or client-gone
+        logger.debug("Streamed run ended with an exception.", exc_info=True)
+
+
+async def _close_quietly(websocket: WebSocket) -> None:
+    """Close a socket that may already have been closed by either side."""
+    try:
+        await websocket.close()
+    except Exception:  # noqa: BLE001 - closing an already-closed socket is fine
+        pass
 
 
 @router.get(

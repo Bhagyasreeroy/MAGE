@@ -8,6 +8,7 @@ persistence, and maps domain models to/from Pydantic schemas.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 import os
@@ -15,6 +16,7 @@ import os
 # Allow importing from the monorepo root when running via uvicorn from /backend
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import UploadFile
@@ -33,7 +35,7 @@ class OrchestratorService:
 
     Responsibilities:
     - Validate/transform the incoming AnalysisRequest.
-    - Invoke OrchestratorAgent.run() (synchronously for now; async in later milestone).
+    - Invoke OrchestratorAgent.run() on a worker thread.
     - Persist the uploaded dataset and the completed run, scoped to the user.
     - Map the raw agent output back to an AnalysisResponse.
     """
@@ -48,6 +50,7 @@ class OrchestratorService:
         user_id: str,
         file: UploadFile | None = None,
         dataset_id: str | None = None,
+        on_step: Callable[[dict[str, Any]], None] | None = None,
     ) -> AnalysisResponse:
         """Orchestrate a full MAGE pipeline run for the given request.
 
@@ -56,6 +59,12 @@ class OrchestratorService:
         querying the same dataset. If only `dataset_id` is given, the
         previously-uploaded file is looked up (scoped to `user_id`) and
         reused.
+
+        `on_step`, when supplied, is forwarded to the agent and invoked once
+        per completed pipeline step — this is what the WebSocket endpoint uses
+        to stream the Reason/Act/Observe trail live. **It is called on the
+        worker thread, not the event loop**, so an async caller must marshal
+        back itself (e.g. via ``loop.call_soon_threadsafe``).
         """
         data: dict[str, Any] = dict(request.metadata)
         resolved_dataset_id = dataset_id
@@ -78,10 +87,17 @@ class OrchestratorService:
             "source" in data,
         )
 
-        raw_result = self._agent.run(
+        # The agent is synchronous and CPU-bound (pandas / sklearn). Run it on a
+        # worker thread rather than inline: on the event loop it would block
+        # every other request for the duration of the analysis, and streaming
+        # would be impossible — `on_step` would fire, but nothing could be sent
+        # over the socket until the whole run had already finished.
+        raw_result = await asyncio.to_thread(
+            self._agent.run,
             goal=request.goal,
             expertise_level=request.expertise_level.value,
             data=data,
+            on_step=on_step,
         )
 
         steps = raw_result.get("steps", [])
