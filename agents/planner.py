@@ -43,11 +43,15 @@ class PlannedStep:
 # every pipeline; mining and visualization are conditioned on the task type.
 _MINING_DIRECTIVES: dict[TaskType, dict[str, Any]] = {
     TaskType.classification: {
-        "computations": ["class_balance", "feature_importance", "correlation"],
+        "computations": [
+            "class_balance", "feature_importance", "correlation", "shap_attribution",
+        ],
         "priority": "feature_importance",
     },
     TaskType.regression: {
-        "computations": ["correlation", "feature_importance", "linearity_check"],
+        "computations": [
+            "correlation", "feature_importance", "linearity_check", "shap_attribution",
+        ],
         "priority": "correlation",
     },
     TaskType.clustering: {
@@ -65,8 +69,8 @@ _MINING_DIRECTIVES: dict[TaskType, dict[str, Any]] = {
 }
 
 _VIZ_DIRECTIVES: dict[TaskType, dict[str, Any]] = {
-    TaskType.classification: {"charts": ["grouped_bar", "box_by_class"]},
-    TaskType.regression: {"charts": ["scatter", "correlation_heatmap"]},
+    TaskType.classification: {"charts": ["grouped_bar", "box_by_class", "feature_attribution"]},
+    TaskType.regression: {"charts": ["scatter", "correlation_heatmap", "feature_attribution"]},
     TaskType.clustering: {"charts": ["cluster_scatter", "pairplot"]},
     TaskType.anomaly_detection: {"charts": ["box", "highlighted_scatter"]},
     TaskType.reporting: {"charts": ["histograms", "missingness_matrix"]},

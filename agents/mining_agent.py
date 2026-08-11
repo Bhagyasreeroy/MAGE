@@ -45,6 +45,11 @@ logger = logging.getLogger(__name__)
 # report a number that doesn't mean anything.
 MIN_NUMERIC_COLUMNS_FOR_PCA = 2
 MIN_ROWS_FOR_CLUSTERING = 10
+# Attribution fits a model, so it needs more rows than a summary statistic does;
+# below this the explanation describes noise rather than the target.
+MIN_ROWS_FOR_ATTRIBUTION = 20
+# Above this many distinct values a numeric target is read as continuous.
+MAX_CLASSES_FOR_ATTRIBUTION = 20
 MAX_CLUSTER_K = 6
 MAX_SCATTER_POINTS = 500
 
@@ -141,6 +146,10 @@ class MiningAgent:
             self._compute_linearity(df, numeric_cols, target_column)
             if "linearity_check" in computations else []
         )
+        feature_attribution = (
+            self._compute_feature_attribution(df, numeric_cols, target_column)
+            if "shap_attribution" in computations else {}
+        )
 
         patterns = self._build_patterns(
             correlations=correlations,
@@ -152,6 +161,7 @@ class MiningAgent:
             dbscan=dbscan,
             class_balance=class_balance,
             linearity=linearity,
+            feature_attribution=feature_attribution,
         )
 
         return {
@@ -165,6 +175,7 @@ class MiningAgent:
             "dbscan": dbscan,
             "class_balance": class_balance,
             "linearity": linearity,
+            "feature_attribution": feature_attribution,
             "patterns": patterns,
             "task_type": task_type,
             "computations_run": sorted(computations) if conditioned else ["<default profile>"],
@@ -185,6 +196,7 @@ class MiningAgent:
             "dbscan": None,
             "class_balance": {},
             "linearity": [],
+            "feature_attribution": {},
             "patterns": [],
             "task_type": None,
             "computations_run": [],
@@ -327,6 +339,138 @@ class MiningAgent:
             zip(numeric_cols, scores), key=lambda pair: pair[1], reverse=True
         )
         return [{"feature": col, "score": round(float(score), 4)} for col, score in ranked]
+
+    # ── Feature attribution (supervised, SHAP) ───────────────────────────
+
+    def _compute_feature_attribution(
+        self, df: pd.DataFrame, numeric_cols: list[str], target_column: str | None
+    ) -> dict[str, Any]:
+        """
+        Per-feature attribution against the actual target (Objective 5, FR).
+
+        Unlike ``_compute_feature_importance`` — which ranks features by PCA
+        loading and so describes *variance*, not *the target* — this fits a
+        small gradient-boosted tree to predict ``target_column`` and explains it
+        with ``shap.TreeExplainer``. Mean absolute SHAP value per feature is
+        reported, normalised to sum to 1 so the numbers read as shares of the
+        explanation.
+
+        Two honesty measures are built into the output:
+
+        • ``method`` names what actually ran. If SHAP is unavailable or fails,
+          this falls back to ``sklearn.inspection.permutation_importance`` and
+          says so, rather than silently presenting one method's numbers under
+          the other's name.
+        • ``model_score`` is the fitted model's train R²/accuracy. Attributions
+          from a model that cannot predict the target are not meaningful, and
+          this is what lets a reader judge that rather than take the ranking on
+          trust.
+
+        Returns ``{}`` when there is no usable target, which is also what a
+        non-supervised goal gets, since the directive is never issued there.
+        """
+        if not target_column or target_column not in df.columns:
+            return {}
+
+        features = [c for c in self._model_feature_columns(df, numeric_cols) if c != target_column]
+        if len(features) < 1:
+            return {}
+
+        frame = df[[*features, target_column]].dropna()
+        if len(frame) < MIN_ROWS_FOR_ATTRIBUTION:
+            return {}
+
+        X = frame[features]
+        y = frame[target_column]
+
+        # Discrete, low-cardinality targets are treated as classes; anything
+        # else is regression. Mirrors how a practitioner would read the column.
+        is_classification = (
+            not pd.api.types.is_numeric_dtype(y) or y.nunique() <= MAX_CLASSES_FOR_ATTRIBUTION
+        )
+        if is_classification and y.nunique() < 2:
+            return {}
+
+        try:
+            model, score = self._fit_attribution_model(X, y, is_classification)
+        except Exception as exc:  # noqa: BLE001 - attribution is additive, never fatal
+            logger.warning("Feature-attribution model fit failed: %s", exc)
+            return {}
+
+        scores, method = self._shap_values(model, X)
+        if scores is None:
+            scores, method = self._permutation_values(model, X, y)
+        if scores is None:
+            return {}
+
+        total = float(np.sum(scores))
+        if total <= 0:
+            return {}
+
+        ranked = sorted(
+            zip(features, (float(s) / total for s in scores)),
+            key=lambda pair: pair[1],
+            reverse=True,
+        )
+        return {
+            "target": target_column,
+            "method": method,
+            "task": "classification" if is_classification else "regression",
+            "model": "GradientBoosting",
+            "model_score": round(float(score), 4),
+            "n_samples": int(len(frame)),
+            "attributions": [
+                {"feature": col, "score": round(share, 4)} for col, share in ranked
+            ],
+        }
+
+    @staticmethod
+    def _fit_attribution_model(X: pd.DataFrame, y: pd.Series, is_classification: bool):
+        """Fit the small tree model SHAP explains, returning (model, train score)."""
+        from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
+
+        # Deliberately small: the model exists to be explained, not deployed.
+        # A shallow, few-estimator fit keeps this well inside the FR-05 budget.
+        kwargs = {"n_estimators": 40, "max_depth": 3, "random_state": 42}
+        model = (
+            GradientBoostingClassifier(**kwargs)
+            if is_classification
+            else GradientBoostingRegressor(**kwargs)
+        )
+        model.fit(X, y)
+        return model, model.score(X, y)
+
+    @staticmethod
+    def _shap_values(model, X: pd.DataFrame) -> tuple[np.ndarray | None, str]:
+        """Mean |SHAP value| per feature, or (None, "") if SHAP cannot run."""
+        try:
+            import shap
+
+            explainer = shap.TreeExplainer(model)
+            values = explainer.shap_values(X)
+            array = np.asarray(values)
+            # Multiclass returns (n_samples, n_features, n_classes); average the
+            # magnitude across classes so every feature gets one comparable number.
+            if array.ndim == 3:
+                array = np.abs(array).mean(axis=2)
+            return np.abs(array).mean(axis=0), "shap.TreeExplainer"
+        except Exception as exc:  # noqa: BLE001 - fall through to permutation
+            logger.warning("SHAP attribution unavailable (%s); using permutation importance.", exc)
+            return None, ""
+
+    @staticmethod
+    def _permutation_values(model, X: pd.DataFrame, y: pd.Series) -> tuple[np.ndarray | None, str]:
+        """Fallback attribution when SHAP is absent — honestly labelled as such."""
+        try:
+            from sklearn.inspection import permutation_importance
+
+            result = permutation_importance(model, X, y, n_repeats=5, random_state=42)
+            # Permutation importance can go negative (a feature that actively
+            # hurt the shuffled model); clip so shares stay interpretable.
+            return np.clip(result.importances_mean, 0, None), "permutation_importance"
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Permutation importance failed: %s", exc)
+            return None, ""
 
     # ── Clustering (goal-agnostic, KMeans with silhouette-selected k) ────
 
@@ -504,6 +648,7 @@ class MiningAgent:
         dbscan: dict[str, Any] | None = None,
         class_balance: dict[str, Any] | None = None,
         linearity: list[dict[str, Any]] | None = None,
+        feature_attribution: dict[str, Any] | None = None,
     ) -> list[str]:
         patterns: list[str] = []
 
@@ -557,6 +702,18 @@ class MiningAgent:
             patterns.append(
                 f"'{top['feature']}' has a {top['linear_strength']} linear relationship "
                 f"with the target (r={top['pearson_r']})."
+            )
+
+        if feature_attribution and feature_attribution.get("attributions"):
+            top = feature_attribution["attributions"][0]
+            # The method and model score travel with the claim so the reader can
+            # weigh it — an attribution from a model that fits poorly is weak
+            # evidence, and hiding that would overstate the finding.
+            patterns.append(
+                f"'{top['feature']}' contributes most to predicting "
+                f"'{feature_attribution['target']}' ({top['score']:.0%} of total attribution, "
+                f"via {feature_attribution['method']}, model score "
+                f"{feature_attribution['model_score']})."
             )
 
         return patterns
