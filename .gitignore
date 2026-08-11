@@ -75,4 +75,11 @@ Project_Presentation.pptx (2).pdf
 
 mage.db
 
+# ─── Evaluation ──────────────────────────────────────────────────────────────
+# Datasets are regenerated deterministically by the harness on every run, so
+# the CSVs are build output. results.json / results.md are NOT ignored — they
+# are the reported deliverable and should be committed with the code that
+# produced them.
+evaluation/_data/
+
 
