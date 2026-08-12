@@ -1,6 +1,6 @@
 # MAGE — Empirical Evaluation Results
 
-> Generated 2026-08-11T18:13:55.122084+00:00 · Python 3.13.7 · baseline mode: `declarative-spec`
+> Generated 2026-08-12T05:47:49.188850+00:00 · Python 3.13.7 · baseline mode: `declarative-spec`
 
 **Experimental design — same-dataset / different-goal.** Each dataset is held constant and pushed through the pipeline once per goal, one goal per task type. Only the natural-language goal varies, so any difference between runs is attributable to goal-conditioning alone. The generic AutoEDA baseline (ydata-profiling) has no mechanism to receive a goal, so its computation set is identical on every run by construction.
 
@@ -37,8 +37,8 @@ MAGE's precision of 1.000 should be read as *"the planner emits nothing outside 
 |---|---|---|
 | Citation coverage | 1.000 | FR-03 — every recommendation cites a source |
 | Goal classification accuracy | 1.000 | Intended vs. classified task type |
-| Mean runtime | 0.44s | — |
-| Max runtime | 2.09s | FR-05 — <60s: **PASS** |
+| Mean runtime | 0.35s | — |
+| Max runtime | 1.69s | FR-05 — <60s: **PASS** |
 | Successful runs | 25/25 | — |
 
 
@@ -46,11 +46,11 @@ MAGE's precision of 1.000 should be read as *"the planner emits nothing outside 
 
 | Dataset | Rows | Cols | MAGE comp. div. | Baseline comp. div. | MAGE chart div. | Precision | Citation cov. | Max runtime |
 |---|---|---|---|---|---|---|---|---|
-| `customer_orders` | 400 | 8 | **0.940** | 0.000 | 0.947 | 1.000 | 1.000 | 1.22s |
-| `iris` | 150 | 5 | **0.940** | 0.000 | 0.947 | 1.000 | 1.000 | 0.24s |
-| `wine` | 178 | 14 | **0.940** | 0.000 | 0.947 | 1.000 | 1.000 | 0.50s |
-| `breast_cancer` | 569 | 31 | **0.940** | 0.000 | 0.947 | 1.000 | 1.000 | 2.09s |
-| `diabetes` | 442 | 11 | **0.940** | 0.000 | 0.925 | 1.000 | 1.000 | 0.29s |
+| `customer_orders` | 400 | 8 | **0.940** | 0.000 | 0.947 | 1.000 | 1.000 | 1.15s |
+| `iris` | 150 | 5 | **0.940** | 0.000 | 0.947 | 1.000 | 1.000 | 0.22s |
+| `wine` | 178 | 14 | **0.940** | 0.000 | 0.947 | 1.000 | 1.000 | 0.47s |
+| `breast_cancer` | 569 | 31 | **0.940** | 0.000 | 0.947 | 1.000 | 1.000 | 1.69s |
+| `diabetes` | 442 | 11 | **0.940** | 0.000 | 0.925 | 1.000 | 1.000 | 0.31s |
 
 
 ## 5. What each goal actually ran
@@ -62,10 +62,10 @@ The raw evidence behind the divergence number. `computations_run` is emitted by 
 
 | Goal (task type) | Classified as | Computations run | Charts | Runtime |
 |---|---|---|---|---|
-| classification | classification | `class_balance`, `correlation`, `feature_importance`, `shap_attribution` | `bar`, `boxplot`, `feature_importance` | 1.22s |
-| regression | regression | `correlation`, `feature_importance`, `linearity_check`, `shap_attribution` | `correlation_heatmap`, `feature_importance`, `scatter` | 0.21s |
-| clustering | clustering | `dbscan`, `kmeans`, `silhouette`, `standardize` | `cluster_scatter` | 0.28s |
-| anomaly_detection | anomaly_detection | `distribution_tails`, `iqr_outliers`, `isolation_forest` | `boxplot` | 0.28s |
+| classification | classification | `class_balance`, `correlation`, `feature_importance`, `shap_attribution` | `bar`, `boxplot`, `feature_importance` | 1.15s |
+| regression | regression | `correlation`, `feature_importance`, `linearity_check`, `shap_attribution` | `correlation_heatmap`, `feature_importance`, `scatter` | 0.18s |
+| clustering | clustering | `dbscan`, `kmeans`, `silhouette`, `standardize` | `cluster_scatter` | 0.25s |
+| anomaly_detection | anomaly_detection | `distribution_tails`, `iqr_outliers`, `isolation_forest` | `boxplot` | 0.22s |
 | reporting | reporting | `descriptive_profile`, `distribution`, `missingness` | `histogram`, `missingness_matrix` | 0.07s |
 
 Baseline, for all 5 goals above (identical every time): `cardinality`, `correlation`, `descriptive_profile`, `distribution`, `distribution_tails`, `duplicates`, `interactions`, `missingness`
@@ -75,11 +75,11 @@ Baseline, for all 5 goals above (identical every time): `cardinality`, `correlat
 
 | Goal (task type) | Classified as | Computations run | Charts | Runtime |
 |---|---|---|---|---|
-| classification | classification | `class_balance`, `correlation`, `feature_importance`, `shap_attribution` | `bar`, `boxplot`, `feature_importance` | 0.24s |
-| regression | regression | `correlation`, `feature_importance`, `linearity_check`, `shap_attribution` | `correlation_heatmap`, `feature_importance`, `scatter` | 0.21s |
-| clustering | clustering | `dbscan`, `kmeans`, `silhouette`, `standardize` | `cluster_scatter` | 0.10s |
-| anomaly_detection | anomaly_detection | `distribution_tails`, `iqr_outliers`, `isolation_forest` | `boxplot` | 0.16s |
-| reporting | reporting | `descriptive_profile`, `distribution`, `missingness` | `histogram`, `missingness_matrix` | 0.02s |
+| classification | classification | `class_balance`, `correlation`, `feature_importance`, `shap_attribution` | `bar`, `boxplot`, `feature_importance` | 0.22s |
+| regression | regression | `correlation`, `feature_importance`, `linearity_check`, `shap_attribution` | `correlation_heatmap`, `feature_importance`, `scatter` | 0.22s |
+| clustering | clustering | `dbscan`, `kmeans`, `silhouette`, `standardize` | `cluster_scatter` | 0.11s |
+| anomaly_detection | anomaly_detection | `distribution_tails`, `iqr_outliers`, `isolation_forest` | `boxplot` | 0.17s |
+| reporting | reporting | `descriptive_profile`, `distribution`, `missingness` | `histogram`, `missingness_matrix` | 0.03s |
 
 Baseline, for all 5 goals above (identical every time): `cardinality`, `correlation`, `descriptive_profile`, `distribution`, `distribution_tails`, `duplicates`, `interactions`, `missingness`
 
@@ -88,11 +88,11 @@ Baseline, for all 5 goals above (identical every time): `cardinality`, `correlat
 
 | Goal (task type) | Classified as | Computations run | Charts | Runtime |
 |---|---|---|---|---|
-| classification | classification | `class_balance`, `correlation`, `feature_importance`, `shap_attribution` | `bar`, `boxplot`, `feature_importance` | 0.50s |
+| classification | classification | `class_balance`, `correlation`, `feature_importance`, `shap_attribution` | `bar`, `boxplot`, `feature_importance` | 0.47s |
 | regression | regression | `correlation`, `feature_importance`, `linearity_check`, `shap_attribution` | `correlation_heatmap`, `feature_importance`, `scatter` | 0.41s |
 | clustering | clustering | `dbscan`, `kmeans`, `silhouette`, `standardize` | `cluster_scatter` | 0.15s |
 | anomaly_detection | anomaly_detection | `distribution_tails`, `iqr_outliers`, `isolation_forest` | `boxplot` | 0.30s |
-| reporting | reporting | `descriptive_profile`, `distribution`, `missingness` | `histogram`, `missingness_matrix` | 0.07s |
+| reporting | reporting | `descriptive_profile`, `distribution`, `missingness` | `histogram`, `missingness_matrix` | 0.06s |
 
 Baseline, for all 5 goals above (identical every time): `cardinality`, `correlation`, `descriptive_profile`, `distribution`, `distribution_tails`, `duplicates`, `interactions`, `missingness`
 
@@ -101,11 +101,11 @@ Baseline, for all 5 goals above (identical every time): `cardinality`, `correlat
 
 | Goal (task type) | Classified as | Computations run | Charts | Runtime |
 |---|---|---|---|---|
-| classification | classification | `class_balance`, `correlation`, `feature_importance`, `shap_attribution` | `bar`, `boxplot`, `feature_importance` | 1.84s |
-| regression | regression | `correlation`, `feature_importance`, `linearity_check`, `shap_attribution` | `correlation_heatmap`, `feature_importance`, `scatter` | 2.09s |
-| clustering | clustering | `dbscan`, `kmeans`, `silhouette`, `standardize` | `cluster_scatter` | 0.59s |
-| anomaly_detection | anomaly_detection | `distribution_tails`, `iqr_outliers`, `isolation_forest` | `boxplot` | 0.92s |
-| reporting | reporting | `descriptive_profile`, `distribution`, `missingness` | `histogram`, `missingness_matrix` | 0.42s |
+| classification | classification | `class_balance`, `correlation`, `feature_importance`, `shap_attribution` | `bar`, `boxplot`, `feature_importance` | 0.77s |
+| regression | regression | `correlation`, `feature_importance`, `linearity_check`, `shap_attribution` | `correlation_heatmap`, `feature_importance`, `scatter` | 1.69s |
+| clustering | clustering | `dbscan`, `kmeans`, `silhouette`, `standardize` | `cluster_scatter` | 0.28s |
+| anomaly_detection | anomaly_detection | `distribution_tails`, `iqr_outliers`, `isolation_forest` | `boxplot` | 0.89s |
+| reporting | reporting | `descriptive_profile`, `distribution`, `missingness` | `histogram`, `missingness_matrix` | 0.16s |
 
 Baseline, for all 5 goals above (identical every time): `cardinality`, `correlation`, `descriptive_profile`, `distribution`, `distribution_tails`, `duplicates`, `interactions`, `missingness`
 
@@ -114,10 +114,10 @@ Baseline, for all 5 goals above (identical every time): `cardinality`, `correlat
 
 | Goal (task type) | Classified as | Computations run | Charts | Runtime |
 |---|---|---|---|---|
-| classification | classification | `class_balance`, `correlation`, `feature_importance`, `shap_attribution` | `boxplot`, `feature_importance` | 0.20s |
+| classification | classification | `class_balance`, `correlation`, `feature_importance`, `shap_attribution` | `boxplot`, `feature_importance` | 0.19s |
 | regression | regression | `correlation`, `feature_importance`, `linearity_check`, `shap_attribution` | `correlation_heatmap`, `feature_importance`, `scatter` | 0.20s |
-| clustering | clustering | `dbscan`, `kmeans`, `silhouette`, `standardize` | `cluster_scatter` | 0.21s |
-| anomaly_detection | anomaly_detection | `distribution_tails`, `iqr_outliers`, `isolation_forest` | `boxplot` | 0.29s |
+| clustering | clustering | `dbscan`, `kmeans`, `silhouette`, `standardize` | `cluster_scatter` | 0.15s |
+| anomaly_detection | anomaly_detection | `distribution_tails`, `iqr_outliers`, `isolation_forest` | `boxplot` | 0.31s |
 | reporting | reporting | `descriptive_profile`, `distribution`, `missingness` | `histogram`, `missingness_matrix` | 0.05s |
 
 Baseline, for all 5 goals above (identical every time): `cardinality`, `correlation`, `descriptive_profile`, `distribution`, `distribution_tails`, `duplicates`, `interactions`, `missingness`
