@@ -26,6 +26,13 @@ DEFAULT_KB_DIR = Path(__file__).parent.parent / "data" / "knowledge_base"
 DEFAULT_CHUNK_SIZE = 800
 DEFAULT_CHUNK_OVERLAP = 120
 
+# A chunk shorter than this cannot stand alone as a retrieval target. The case
+# that produces them is a heading immediately followed by a table: the table
+# branch below would flush the heading on its own, leaving a ~60-character
+# chunk that is retrievable and citable while carrying no methodology. Such a
+# heading is kept with the table it introduces instead.
+MIN_STANDALONE_CHUNK = 120
+
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n(.*)$", re.DOTALL)
 
 
@@ -92,7 +99,12 @@ def _split_text(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
         # Tables are never merged with unrelated preceding prose, and never
         # split mid-row — both produce nonsensical fragments out of context.
         if _is_markdown_table(paragraph):
-            if current:
+            # Only break before the table if what precedes it can stand on its
+            # own. A short run-up is almost always the section heading that
+            # introduces the table, and it belongs with it — both because a
+            # bare heading is useless as a retrieval target and because the
+            # heading is what tells a reader what the table's rows describe.
+            if current and len(current) >= MIN_STANDALONE_CHUNK:
                 seed_overlap()
             current = f"{current}\n\n{paragraph}".strip() if current else paragraph
             continue
