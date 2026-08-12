@@ -100,28 +100,22 @@ class TestThreeRegistersExist:
         }
         assert len(set(rendered.values())) == 3
 
-    def test_known_gap_markdown_tables_are_dropped_from_every_register(self) -> None:
+    def test_markdown_tables_now_reach_every_register(self) -> None:
         """
-        Documents a real content gap, deliberately left unfixed in this change.
+        The inverse of a gap this file used to pin.
 
-        `_strip_markdown_structure` discards whole table rows to stop them
-        flattening into unreadable runs of cell text. The cost is that a
-        knowledge-base document whose substance *is* a table — the goal→chart
-        decision table in `distribution_profiling.md` is the clearest case —
-        contributes only its heading to a recommendation. Preserving tables for
-        the technical register would fix both this and the register collapse
-        above, but it changes what the ReportLab exporter has to render, so it
-        belongs with the knowledge-base work, not here.
-
-        This test pins the current behaviour so the gap is visible rather than
-        forgotten. **When tables are preserved, this test should start failing
-        — delete it then.**
+        Table rows were previously discarded wholesale, so a knowledge-base
+        document whose substance *is* a table contributed only its heading.
+        They are now rewritten as labelled sentences — the full contract lives
+        in `tests/agents/test_markdown_tables.py`.
         """
         from agents.recommendation_agent import _clean_technical
 
-        chunk = "## Chart selection\n\n| Goal | Chart |\n|---|---|\n| compare | bar |\n"
-        assert "|" not in _clean_technical(chunk)
-        assert "bar" not in _clean_technical(chunk)
+        cleaned = _clean_technical(
+            "## Chart selection\n\n| Goal | Chart |\n|---|---|\n| compare | bar |\n"
+        )
+        assert "|" not in cleaned
+        assert "Chart: bar" in cleaned
 
     def test_detail_increases_with_expertise_in_aggregate(
         self, recommendations: list[dict]

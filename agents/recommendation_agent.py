@@ -84,26 +84,88 @@ def _get(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
-def _strip_markdown_structure(text: str) -> str:
-    """Drop markdown tables and headings from a retrieved knowledge-base chunk.
+def _is_separator_row(line: str) -> bool:
+    """True for ``|---|:--:|`` separators and bare horizontal rules."""
+    return bool(line) and set(line) <= set("-|:= ")
 
-    Chunks contain markdown tables (``| Goal | Chart |``) and ``|---|---|``
-    separator rows. Inlined into a recommendation sentence these flatten into
-    unreadable runs of cell text ("numeric Line chart ... Choropleth ..."), so
-    we remove whole table lines rather than just stripping the pipe characters.
-    Prose before/after the table is preserved.
+
+def _split_row(line: str) -> list[str]:
+    """Split one markdown table row into stripped cell values."""
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _table_block_to_sentences(block: list[str]) -> list[str]:
     """
-    kept: list[str] = []
+    Rewrite one markdown table as one labelled sentence per row.
+
+    ``| Goal | Chart |`` / ``| Compare groups | Box plot |`` becomes
+    ``Goal: Compare groups; Chart: Box plot.`` — the header row supplies the
+    field names rather than being emitted as content.
+
+    This is the point of the whole function. Several knowledge-base documents
+    carry their real guidance as a decision table, so dropping tables meant
+    those documents contributed only their headings. Inlining the raw cells
+    instead produces an unreadable run ("numeric Line chart … Choropleth …"),
+    which is why the values are labelled.
+    """
+    rows = [_split_row(line) for line in block if not _is_separator_row(line)]
+    if not rows:
+        return []
+
+    headers, data_rows = rows[0], rows[1:]
+    if not data_rows:
+        # A single row with no body is a header with nothing under it; keep the
+        # values rather than inventing labels for them.
+        return [" ".join(cell for cell in headers if cell)]
+
+    sentences: list[str] = []
+    for cells in data_rows:
+        parts: list[str] = []
+        for index, cell in enumerate(cells):
+            if not cell:
+                continue  # an empty cell labelled "Header:" is noise
+            label = headers[index] if index < len(headers) else ""
+            parts.append(f"{label}: {cell}" if label else cell)
+        if parts:
+            sentences.append("; ".join(parts) + ".")
+    return sentences
+
+
+def _flatten_markdown_tables(text: str) -> str:
+    """Replace every markdown table in `text` with labelled per-row sentences."""
+    out: list[str] = []
+    block: list[str] = []
+
+    def flush() -> None:
+        if block:
+            out.extend(_table_block_to_sentences(block))
+            block.clear()
+
     for line in text.splitlines():
         stripped = line.strip()
-        # Separator rows like |---|:--:| or a bare horizontal rule.
-        if stripped and set(stripped) <= set("-|:= "):
-            continue
-        # Table rows: two or more pipe cell separators.
         if stripped.count("|") >= 2:
-            continue
-        kept.append(line)
-    joined = "\n".join(kept)
+            block.append(stripped)
+        elif _is_separator_row(stripped):
+            # Inside a table this is the header separator; outside it is a bare
+            # horizontal rule, which carries nothing worth keeping.
+            if block:
+                block.append(stripped)
+        else:
+            flush()
+            out.append(line)
+    flush()
+    return "\n".join(out)
+
+
+def _strip_markdown_structure(text: str) -> str:
+    """Convert a retrieved knowledge-base chunk into plain readable prose.
+
+    Tables are rewritten row-by-row into labelled sentences (see
+    :func:`_table_block_to_sentences`) rather than discarded; headings and
+    inline emphasis markers are removed. Prose before and after a table is
+    preserved in place.
+    """
+    joined = _flatten_markdown_tables(text)
     joined = _HEADING_RE.sub("", joined)      # drop "## Heading" markers
     joined = _INLINE_MD_RE.sub("", joined)    # drop * ` _ emphasis
     return joined
