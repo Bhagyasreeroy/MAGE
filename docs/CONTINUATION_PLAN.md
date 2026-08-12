@@ -70,7 +70,7 @@ citability **+** role-adaptive output, **empirically evaluated** against a gener
 | 1 | **Multimodal ingestion** — CSV/Excel/PDF/scanned/DB → one unified schema | 🟢 90% (OCR deferred) |
 | 2 | **Goal-conditioned planning** — classify task type, build *conditional* pipeline | ✅ ~90% — **this is the thesis and it works** |
 | 3 | **Multi-agent orchestration** — planner routes to specialists, aggregates | 🟡 ~75% (rule-based, not model-driven) |
-| 4 | **RAG-grounded recommendations** — KB + run-memory, citable not improvised | 🟡 ~70% (**run-memory absent**) |
+| 4 | **RAG-grounded recommendations** — KB + run-memory, citable not improvised | 🟢 ~90% (**run-memory built 12 Aug**; 14-doc corpus) |
 | 5 | **Explainability** — feature-level explanations + confidence scores | 🟢 ~85% (**SHAP done 11 Aug**; LIME not attempted) |
 | 6 | **Role-adaptive output** — technical vs. plain-language registers | 🟢 ~85% (**3 of 3 done 11 Aug**, deterministic) |
 | 7 | **Empirical validation** — same-dataset/different-goal vs. AutoEDA baseline | ✅ **~90% — harness built & run (11 Aug), see `evaluation/`** |
@@ -601,7 +601,39 @@ Small change, closes a functional requirement outright.
 
 ### PHASE 2 — Strong value, do if Phase 1 lands early (Days 6–9, Aug 16–19)
 
-#### 2.1 Expand the knowledge base — M5
+#### 2.1 Expand the knowledge base — M5 · ✅ **DONE 12 Aug 2026**
+
+**Corpus 5 → 14 documents**, plus a markdown-table fix and a chunker fix. Written test-first
+(`tests/rag/test_corpus_coverage.py`, 31 tests).
+
+Added: `class_imbalance`, `feature_attribution`, `regression_diagnostics`, `classification_models`,
+`data_leakage`, `train_test_methodology`, `dimensionality_reduction`, `feature_engineering`,
+`time_series_analysis`. `feature_attribution.md` closes a gap the SHAP work opened — the pipeline
+was emitting attribution findings with no methodology to cite.
+
+**Measured effect:** distinct sources cited per run **3.56 → 4.84 (+36%)**, citation coverage still
+1.000. That is the "citation quality improves with corpus size" result, reproducible from the
+harness.
+
+⚠️ **Two bugs found, both now fixed:**
+1. **Markdown tables were dropped from every register.** Several documents carry their real
+   guidance as a decision table; those were discarded wholesale, so the goal→chart table yielded
+   38 characters — its title. Rows are now rewritten as labelled sentences
+   (`Goal: compare; Chart: box plot.`), recovering **2.8× more usable text** from table-bearing
+   chunks. Retires the gap-pinning test that was written to fail exactly when this was fixed.
+2. **The chunker orphaned headings.** A heading immediately followed by a table was flushed as its
+   own ~60-character chunk — retrievable and citable, carrying no methodology. Short run-ups now
+   stay with the table they introduce.
+
+⚠️ **My first version of the coverage test passed vacuously, and this matters for the report.**
+It asserted only that *something* scored above `MIN_CONFIDENCE`. At 0.15 that floor is low enough
+that almost any query clears it against almost any document — *"how do I interpret SHAP values"*
+retrieved `clustering.md` at 0.202. **That is a false citation: FR-03 satisfied in form while the
+cited methodology is unrelated.** The test now asserts *which* document grounds each query. If you
+report FR-03, report it with this caveat, or raise `MIN_CONFIDENCE` and re-measure.
+
+*Original scoping notes, retained for reference:*
+
 Cheapest quality win in the project: authoring markdown, **zero code changes**, loader picks files up
 automatically. Target ~12–15 docs. Highest-value additions, matched to what M3 actually computes:
 classification model selection, regression diagnostics, class imbalance handling, feature
@@ -643,7 +675,38 @@ reads) omits it. Add a "Agent Execution Trail" section to `generate_pdf` — a t
 agent / reasoning / observation / status / latency. Low effort, directly strengthens a core FR, and
 lands in the deliverable that gets graded.
 
-#### 2.3 `run_memory` table — Objective 4's missing half
+#### 2.3 `run_memory` table — Objective 4's missing half · ✅ **DONE 12 Aug 2026**
+
+**Built and wired end-to-end.** Written test-first across three files — the store
+(`tests/backend/test_run_memory.py`), agent-side grounding
+(`tests/agents/test_prior_run_grounding.py`), and HTTP wiring
+(`tests/backend/test_run_memory_wiring.py`). 38 tests; suite now **494 green**.
+
+Each completed run records goal, task type, a hashed dataset fingerprint, and headline findings.
+A new run retrieves the user's most similar prior runs and folds their findings into the retrieval
+query, so what the user has already learned biases which methodology is retrieved next.
+
+**Demonstrated:** run 1 gets no prior context; run 2 on a related goal recalls it at similarity
+0.613 along with its actual findings (*"Data separates into 2 clusters (silhouette 0.406)"*), and
+citations remain knowledge-base-only.
+
+Design points worth defending:
+- **Per-user isolation** — every query scoped to one `user_id`, tested at both the service level
+  and over HTTP. Run memory is derived from private data; leaking it would be worse than not
+  having the feature.
+- **Never fatal** — every entry point swallows its own failures and returns empty. Memory is
+  additive; a recommendation grounded in the KB alone is degraded, a failed analysis is broken.
+- **Derived data only** — the dataset is a SHA-256 of sorted column names + row count, so no
+  column name or value reaches the table.
+- **Citation integrity preserved** — prior runs are *context*, surfaced on a separate
+  `prior_runs` key. `sources` and `rag_sources` still name only KB documents, because FR-03
+  promises retrievable methodology and "you found this last week" is not that.
+- **`MIN_SIMILARITY = 0.45`**, well above the KB's 0.15, because the failure modes differ: an
+  unrelated methodology doc is unhelpful, an unrelated prior run *asserts the user learned
+  something they did not*.
+
+*Original scoping notes, retained for reference:*
+
 The proposal's "improves with use" benefit. Minimum viable version: a `run_memory` table storing
 (goal text, task_type, dataset fingerprint, embedding, key findings). On a new run, retrieve the
 top-k most similar prior runs and include them as additional grounding context alongside the KB.
@@ -694,7 +757,7 @@ something an examiner reading the code could find.
 - Full Reason/Act/Observe trail with per-step latency.
 - Runs entirely locally with **no API key** — reproducible, deterministic, no data leaves the machine.
 - 8 input formats + live DB + REST ingestion.
-- 406 tests (all green, 12 Aug), including cross-user isolation on every export path and 91
+- 494 tests (all green, 12 Aug), including cross-user isolation on every export path and 91
   covering the evaluation harness.
 - The goal-conditioning claim is **measured, not asserted**: 0.950 cross-goal divergence vs. the
   baseline's 0.000, against a baseline verified exact against the real ydata-profiling.
@@ -757,7 +820,7 @@ before the final push so the submitted default branch is the real state of the p
 - **`PYTHONPATH=.` from repo root** for both uvicorn and pytest — `agents/`, `rag/`, and
   `data_pipeline/` are root-level packages. `orchestrator_service.py` even does a `sys.path.insert`
   to survive being launched from `backend/`.
-- **All 406 tests must stay green.** Any change to `MiningAgent` or `VisualizationAgent` must keep the
+- **All 494 tests must stay green.** Any change to `MiningAgent` or `VisualizationAgent` must keep the
   no-directives default profile intact — that backward-compatibility path is what several older
   tests rely on.
 - **Docstring style:** module header with a `────` underline, then a short prose description of
@@ -810,7 +873,7 @@ before the final push so the submitted default branch is the real state of the p
 > harness (Objective 7) — it's the project's validation claim and has no code yet. Before writing
 > code, confirm the metric design with me.
 >
-> Constraints: `PYTHONPATH=. pytest tests/ -v` must stay green (406 tests); keep the no-directives
+> Constraints: `PYTHONPATH=. pytest tests/ -v` must stay green (494 tests); keep the no-directives
 > default profile in MiningAgent/VisualizationAgent intact; match existing docstring style.
 
 ---
