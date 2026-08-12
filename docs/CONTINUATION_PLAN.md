@@ -142,7 +142,7 @@ MAGE/
 │   └── processing.py          101 L  Pandas only; Spark/Dask raise NotImplementedError
 │
 ├── data/knowledge_base/           5 markdown methodology docs (~243 lines total)
-├── tests/                         385 test functions across 25 files
+├── tests/                         406 test functions across 26 files
 ├── docs/                          architecture.md, api_contracts.md, PROJECT_PROGRESS.md,
 │                                  auth_documentation.md, module2_plan.md, this file
 ├── infra/k8s/README.md            Placeholder only
@@ -324,7 +324,7 @@ boxplot-as-five-number-table), recommendations, and a "Grounded In" citation lis
 titles (module-scope `_TITLE_CACHE`). Per-chart try/except so one bad spec never kills the export.
 JSON = full run payload including every agent step. BibTeX = `@misc` per grounded source.
 `tests/backend/test_export.py` has 8 tests, **5 of them security** (401s, 404s, cross-user isolation).
-**Left here:** step log absent from the PDF (only in JSON) — adding it would strengthen FR-06;
+**Left here:** ~~step log absent from the PDF~~ — **added 12 Aug** (§2.2);
 boxplots degrade to a table; no CSV export; `generate_pdf` runs synchronously.
 
 ### Requirements scoreboard
@@ -336,7 +336,7 @@ boxplots degrade to a table; no CSV export; `generate_pdf` runs synchronously.
 | FR-03 | Every recommendation carries a RAG citation | ✅ |
 | FR-04 | Expertise visibly alters output language | ✅ **3 of 3 registers (11 Aug)**, deterministic |
 | FR-05 | End-to-end < 60s for <100k rows | ✅ **benchmarked 11 Aug: max 2.03s over 25 runs** (`evaluation/results.md`) |
-| FR-06 | Every agent step logged/inspectable | ✅ (but not in the PDF) |
+| FR-06 | Every agent step logged/inspectable | ✅ **incl. the PDF (12 Aug)** |
 | NFR-01 | Horizontal scaling via containerization | 🟡 Docker ✅, K8s placeholder |
 | NFR-02 | Incremental vector indexing | ❌ unverified |
 | NFR-03 | LLM retry with exponential backoff | ❌ N/A until an LLM exists |
@@ -610,7 +610,34 @@ train/test methodology. Use the existing frontmatter format (`title`, `doc_type`
 *Measure the effect in the evaluation harness — "citation quality improved with corpus size" is a
 result you can report.*
 
-#### 2.2 Put the agent step log in the PDF — FR-06
+#### 2.2 Put the agent step log in the PDF — FR-06 · ✅ **DONE 12 Aug 2026**
+
+**FR-06 now true of the deliverable, not just the API.** An "Agent Execution Trail" section is
+appended to `generate_pdf` — a repeating-header table of #/agent/reasoning/observation/status/
+latency, closed by a step count and total agent time. 21 tests in
+`tests/backend/test_export_trail.py`; suite now **406 green**.
+
+- Renders from the persisted run only — export still never recomputes.
+- Absent (rather than an empty table under a promising heading) when a run has no steps.
+- Errored steps are shown, not filtered: a failed step is exactly what someone reading a trail is
+  looking for.
+- The redundant `Agent` suffix is trimmed per row — the column is headed *Agent*, and
+  "RecommendationAgent" wraps mid-word at that column width.
+
+⚠️ **Fixed a live crash while building this.** ReportLab's `Paragraph` parses its input as
+mini-XML, and user text was going in unescaped. A goal containing `<b ` raised
+`paraparser: syntax error` and **failed the whole PDF export with a 500**; `<revenue>` was silently
+swallowed as an unknown tag and vanished from the report. Both are reachable from anything a user
+can type into a goal — and from any column name in their data, since agent observations quote
+column names back. All user-derived text now goes through `_esc()`. Regression tests cover the
+crash, the silent-deletion case, and an unsafe column name inside a step observation.
+
+*Note for anyone writing new PDF sections:* wrap user text in `_esc()`. Also be aware that
+pdfplumber extracts a table **row-wise across columns**, so a wrapped cell's continuation appears
+after the later columns of that row — assertions on extracted text must not span a wrap point.
+
+*Original scoping notes, retained for reference:*
+
 FR-06 claims a complete inspectable explainability trail; the PDF (the artefact an examiner actually
 reads) omits it. Add a "Agent Execution Trail" section to `generate_pdf` — a table of
 agent / reasoning / observation / status / latency. Low effort, directly strengthens a core FR, and
@@ -667,7 +694,7 @@ something an examiner reading the code could find.
 - Full Reason/Act/Observe trail with per-step latency.
 - Runs entirely locally with **no API key** — reproducible, deterministic, no data leaves the machine.
 - 8 input formats + live DB + REST ingestion.
-- 385 tests (all green, 11 Aug), including cross-user isolation on every export path and 91
+- 406 tests (all green, 12 Aug), including cross-user isolation on every export path and 91
   covering the evaluation harness.
 - The goal-conditioning claim is **measured, not asserted**: 0.950 cross-goal divergence vs. the
   baseline's 0.000, against a baseline verified exact against the real ydata-profiling.
@@ -730,7 +757,7 @@ before the final push so the submitted default branch is the real state of the p
 - **`PYTHONPATH=.` from repo root** for both uvicorn and pytest — `agents/`, `rag/`, and
   `data_pipeline/` are root-level packages. `orchestrator_service.py` even does a `sys.path.insert`
   to survive being launched from `backend/`.
-- **All 385 tests must stay green.** Any change to `MiningAgent` or `VisualizationAgent` must keep the
+- **All 406 tests must stay green.** Any change to `MiningAgent` or `VisualizationAgent` must keep the
   no-directives default profile intact — that backward-compatibility path is what several older
   tests rely on.
 - **Docstring style:** module header with a `────` underline, then a short prose description of
@@ -783,7 +810,7 @@ before the final push so the submitted default branch is the real state of the p
 > harness (Objective 7) — it's the project's validation claim and has no code yet. Before writing
 > code, confirm the metric design with me.
 >
-> Constraints: `PYTHONPATH=. pytest tests/ -v` must stay green (385 tests); keep the no-directives
+> Constraints: `PYTHONPATH=. pytest tests/ -v` must stay green (406 tests); keep the no-directives
 > default profile in MiningAgent/VisualizationAgent intact; match existing docstring style.
 
 ---
