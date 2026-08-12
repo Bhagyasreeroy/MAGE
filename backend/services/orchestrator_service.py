@@ -22,9 +22,10 @@ from typing import Any
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.services import analysis_run_service, dataset_service
+from backend.services import analysis_run_service, dataset_service, run_memory_service
 from backend.schemas.analysis import AnalysisRequest, AnalysisResponse
 from agents.orchestrator import OrchestratorAgent
+from agents.planner import INGESTION, MINING
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,47 @@ class OrchestratorService:
 
     def __init__(self) -> None:
         self._agent = OrchestratorAgent()
+
+    @staticmethod
+    async def _remember(
+        db: AsyncSession,
+        user_id: str,
+        goal: str,
+        raw_result: dict[str, Any],
+        steps: list[dict[str, Any]],
+    ) -> None:
+        """
+        Record this run in run memory, never letting that failure surface.
+
+        The dataset is fingerprinted from the ingested schema rather than the
+        uploaded file, so two uploads of the same table are recognised as the
+        same data. `run_memory_service.record` already swallows its own
+        errors; the extra guard here covers the shape-extraction above it.
+        """
+        try:
+            mining = next(
+                (s["output"] for s in steps if s["agent_name"] == MINING), {}
+            ) or {}
+            ingestion = next(
+                (s["output"] for s in steps if s["agent_name"] == INGESTION), {}
+            ) or {}
+            columns = [
+                str(c.get("name", ""))
+                for c in (ingestion.get("column_summary") or [])
+                if isinstance(c, dict)
+            ]
+            await run_memory_service.record(
+                db,
+                user_id=user_id,
+                goal=goal,
+                task_type=str(raw_result.get("task_type") or ""),
+                dataset_fingerprint=run_memory_service.dataset_fingerprint(
+                    columns, int(ingestion.get("row_count") or 0)
+                ),
+                findings=[str(p) for p in (mining.get("patterns") or [])],
+            )
+        except Exception:  # noqa: BLE001 - memory is additive, never fatal
+            logger.warning("Could not record run memory for this run.", exc_info=True)
 
     async def run(
         self,
@@ -87,6 +129,13 @@ class OrchestratorService:
             "source" in data,
         )
 
+        # Objective 4 — ground this run in the user's own analytical history as
+        # well as the knowledge base. Retrieved before the pipeline runs so the
+        # RecommendationAgent can use it; scoped to this user by the service.
+        data["prior_runs"] = await run_memory_service.retrieve_similar(
+            db, user_id=user_id, goal=request.goal
+        )
+
         # The agent is synchronous and CPU-bound (pandas / sklearn). Run it on a
         # worker thread rather than inline: on the event loop it would block
         # every other request for the duration of the analysis, and streaming
@@ -118,6 +167,11 @@ class OrchestratorService:
         recommendations = raw_result.get("recommendations", [])
         rag_sources = raw_result.get("rag_sources", [])
         summary = raw_result.get("summary", "")
+
+        # Objective 4 — remember this run so later comparable questions can be
+        # grounded in it. Derived material only: the goal, the task type, a
+        # hashed dataset fingerprint, and the headline findings.
+        await self._remember(db, user_id, request.goal, raw_result, steps)
 
         run = await analysis_run_service.save_run(
             db,

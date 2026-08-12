@@ -268,6 +268,20 @@ class RecommendationAgent:
                 )
         self._kb_loaded = True
 
+    @staticmethod
+    def _prior_runs(context: dict[str, Any]) -> list[dict[str, Any]]:
+        """
+        Prior-run memory from the context, defensively normalised.
+
+        Supplied by the service layer, which owns the database. Anything
+        malformed is discarded rather than raised on: memory is additive
+        grounding, and a bad memory row must not be able to fail an analysis.
+        """
+        prior = context.get("prior_runs")
+        if not isinstance(prior, list):
+            return []
+        return [run for run in prior if isinstance(run, dict)]
+
     def _build_query(self, context: dict[str, Any]) -> str:
         """Compose a goal-conditioned retrieval query from goal + upstream findings."""
         parts = [str(context.get("goal", ""))]
@@ -279,6 +293,13 @@ class RecommendationAgent:
         ingestion_output = context.get("IngestionAgent_output")
         warnings = _get(ingestion_output, "warnings", []) or []
         parts.extend(str(w) for w in warnings)
+
+        # What this user previously found on comparable questions (Objective 4).
+        # Appended last so the current goal and this run's own findings still
+        # dominate the query — history informs retrieval, it does not replace
+        # the present question.
+        for run in self._prior_runs(context):
+            parts.extend(str(f) for f in (run.get("findings") or []))
 
         return " ".join(p for p in parts if p)
 
@@ -321,6 +342,7 @@ class RecommendationAgent:
                     }
                 ],
                 "rag_sources": sources,
+                "prior_runs": self._prior_runs(context),
                 "message": "Answered directly from computed statistics.",
             }
 
@@ -330,6 +352,7 @@ class RecommendationAgent:
             return {
                 "recommendations": [],
                 "rag_sources": [],
+                "prior_runs": self._prior_runs(context),
                 "message": "No goal or upstream findings to ground recommendations in.",
             }
 
@@ -390,5 +413,9 @@ class RecommendationAgent:
         return {
             "recommendations": recommendations,
             "rag_sources": rag_sources,
+            # Surfaced for display, deliberately separate from `rag_sources`:
+            # a prior run is context the user can recognise, not retrievable
+            # methodology, and FR-03's citation promise covers only the latter.
+            "prior_runs": self._prior_runs(context),
             "message": f"Generated {len(recommendations)} RAG-grounded recommendation(s).",
         }

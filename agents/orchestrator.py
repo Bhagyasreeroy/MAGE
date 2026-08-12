@@ -116,6 +116,14 @@ class OrchestratorAgent:
             "data": data or {},
         }
 
+        # Prior-run memory arrives on the data payload (the service layer owns
+        # the database) but is consumed by the RecommendationAgent as ordinary
+        # context, so lift it to the top level here rather than making every
+        # agent reach into `data` for it.
+        prior_runs = (data or {}).get("prior_runs")
+        if prior_runs:
+            context["prior_runs"] = prior_runs
+
         # 1. Classify the goal → task type. (Rules work on the goal text alone;
         #    the target column is refined once ingestion reveals the schema.)
         classification = self._classifier.classify(goal)
