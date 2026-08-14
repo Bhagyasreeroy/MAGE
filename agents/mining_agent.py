@@ -45,6 +45,14 @@ logger = logging.getLogger(__name__)
 # report a number that doesn't mean anything.
 MIN_NUMERIC_COLUMNS_FOR_PCA = 2
 MIN_ROWS_FOR_CLUSTERING = 10
+# Rows sampled when scoring a candidate clustering. `silhouette_score` computes
+# pairwise distances, so its cost is quadratic in the number of rows, and it is
+# evaluated once per candidate k — five quadratic passes over the full dataset.
+# At 40k rows that took ~75s and breached FR-05's 60-second end-to-end budget
+# on its own. Scoring a fixed-size random sample makes the cost independent of
+# dataset size; the silhouette is a mean over per-row scores, so a sample of
+# this size estimates it to well within the precision the value is reported at.
+SILHOUETTE_SAMPLE_SIZE = 5_000
 # Attribution fits a model, so it needs more rows than a summary statistic does;
 # below this the explanation describes noise rather than the target.
 MIN_ROWS_FOR_ATTRIBUTION = 20
@@ -492,12 +500,21 @@ class MiningAgent:
             scaled = StandardScaler().fit_transform(matrix)
 
             max_k = min(MAX_CLUSTER_K, len(matrix) - 1)
+            # Score on a sample once the dataset is large enough for the
+            # quadratic pairwise-distance cost to dominate. `random_state` keeps
+            # the sample — and therefore the reported score and the selected k —
+            # reproducible, which the project claims throughout.
+            sample_size = (
+                SILHOUETTE_SAMPLE_SIZE if len(scaled) > SILHOUETTE_SAMPLE_SIZE else None
+            )
             best: dict[str, Any] | None = None
             for k in range(2, max_k + 1):
                 labels = KMeans(n_clusters=k, n_init=10, random_state=42).fit_predict(scaled)
                 if len(set(labels)) < 2:
                     continue
-                score = silhouette_score(scaled, labels)
+                score = silhouette_score(
+                    scaled, labels, sample_size=sample_size, random_state=42
+                )
                 if best is None or score > best["score"]:
                     best = {"k": k, "labels": labels, "score": score}
 
