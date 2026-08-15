@@ -36,6 +36,7 @@ dependencies = [
     "openpyxl>=3.1.0",
     "scikit-learn>=1.4.0",
     "pdfplumber>=0.11.0",       # PDF table extraction (M1 ingestion)
+    "duckdb>=1.0.0",            # sandboxed SQL-over-DataFrame query console
 
     # ── HTTP client (for internal service calls) ───────────────────────
     "httpx>=0.27.0",
