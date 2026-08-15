@@ -50,6 +50,26 @@ async def _make_dataset(user_id: str, filename: str = "sales.csv", content: byte
         return await dataset_service.save_dataset(db, user_id, filename, content)
 
 
+class _FakeLLMClient:
+    """Duck-types GeminiClient for tests — no network, no API key."""
+
+    def __init__(self, configured: bool = True, response: str = "SELECT * FROM df", error: Exception | None = None) -> None:
+        self._configured = configured
+        self._response = response
+        self._error = error
+        self.last_prompt: str | None = None
+
+    @property
+    def is_configured(self) -> bool:
+        return self._configured
+
+    def generate(self, prompt: str, timeout: float = 20.0) -> str:
+        self.last_prompt = prompt
+        if self._error is not None:
+            raise self._error
+        return self._response
+
+
 class TestApplyTransform:
     @pytest.mark.asyncio
     async def test_drop_columns_produces_new_version(self) -> None:
@@ -195,3 +215,105 @@ class TestListVersions:
             versions = await dataset_service.list_versions(db, user_id, dataset.root_id)
         assert len(versions) == 1
         assert versions[0].id == dataset.id
+
+
+class TestGenerateSqlFromQuestion:
+    """The LLM only ever produces SQL text — that text is subject to the
+    exact same validation/sandboxed execution as hand-typed SQL. These
+    tests prove that claim rather than just asserting it."""
+
+    @pytest.mark.asyncio
+    async def test_successful_translation_and_execution(self) -> None:
+        user_id = await _make_user()
+        dataset = await _make_dataset(user_id)
+        fake = _FakeLLMClient(response="SELECT region, revenue FROM df WHERE region = 'East'")
+
+        async with async_session() as db:
+            sql, result = await transform_service.generate_sql_from_question(
+                db, user_id, dataset.id, "show me east region revenue", llm_client=fake
+            )
+
+        assert sql == "SELECT region, revenue FROM df WHERE region = 'East'"
+        assert list(result.columns) == ["region", "revenue"]
+        assert len(result) == 3
+        assert "region" in fake.last_prompt and "revenue" in fake.last_prompt
+
+    @pytest.mark.asyncio
+    async def test_strips_markdown_fences(self) -> None:
+        user_id = await _make_user()
+        dataset = await _make_dataset(user_id)
+        fake = _FakeLLMClient(response="```sql\nSELECT * FROM df\n```")
+
+        async with async_session() as db:
+            sql, result = await transform_service.generate_sql_from_question(
+                db, user_id, dataset.id, "show me everything", llm_client=fake
+            )
+
+        assert sql == "SELECT * FROM df"
+        assert len(result) == 5
+
+    @pytest.mark.asyncio
+    async def test_non_sql_response_raises_validation_error(self) -> None:
+        user_id = await _make_user()
+        dataset = await _make_dataset(user_id)
+        fake = _FakeLLMClient(response="I'm not sure how to answer that question.")
+
+        async with async_session() as db:
+            with pytest.raises(transform_service.QueryValidationError):
+                await transform_service.generate_sql_from_question(
+                    db, user_id, dataset.id, "what is the meaning of life", llm_client=fake
+                )
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_client_raises_helpful_error(self) -> None:
+        user_id = await _make_user()
+        dataset = await _make_dataset(user_id)
+        fake = _FakeLLMClient(configured=False)
+
+        async with async_session() as db:
+            with pytest.raises(transform_service.QueryValidationError, match="API key"):
+                await transform_service.generate_sql_from_question(
+                    db, user_id, dataset.id, "show me everything", llm_client=fake
+                )
+
+    @pytest.mark.asyncio
+    async def test_malicious_generated_sql_is_still_blocked(self) -> None:
+        # Proves there's no new trust boundary: even if the LLM produced a
+        # filesystem-reading query, the same sandboxed DuckDB execution
+        # (enable_external_access=False) that blocks hand-typed attempts
+        # blocks this too.
+        user_id = await _make_user()
+        dataset = await _make_dataset(user_id)
+        fake = _FakeLLMClient(response="SELECT * FROM read_csv('/etc/passwd')")
+
+        async with async_session() as db:
+            with pytest.raises(transform_service.QueryValidationError):
+                await transform_service.generate_sql_from_question(
+                    db, user_id, dataset.id, "read the passwd file", llm_client=fake
+                )
+
+    @pytest.mark.asyncio
+    async def test_stacked_statements_still_blocked(self) -> None:
+        user_id = await _make_user()
+        dataset = await _make_dataset(user_id)
+        fake = _FakeLLMClient(response="SELECT 1; DROP TABLE df;")
+
+        async with async_session() as db:
+            with pytest.raises(transform_service.QueryValidationError):
+                await transform_service.generate_sql_from_question(
+                    db, user_id, dataset.id, "do something bad", llm_client=fake
+                )
+
+    @pytest.mark.asyncio
+    async def test_does_not_persist(self) -> None:
+        user_id = await _make_user()
+        dataset = await _make_dataset(user_id)
+        fake = _FakeLLMClient(response="SELECT * FROM df")
+
+        async with async_session() as db:
+            await transform_service.generate_sql_from_question(
+                db, user_id, dataset.id, "show me everything", llm_client=fake
+            )
+        async with async_session() as db:
+            versions = await dataset_service.list_versions(db, user_id, dataset.root_id)
+        assert len(versions) == 1

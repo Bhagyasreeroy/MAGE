@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import {
   applyTransform,
+  askInEnglish,
   fetchDatasetDetail,
   fetchDatasetPreview,
   fetchDatasetVersions,
@@ -698,6 +699,8 @@ function QueryTab({
   const [isRunning, setIsRunning] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [lastRunSql, setLastRunSql] = useState<string | null>(null);
+  const [question, setQuestion] = useState('');
+  const [isTranslating, setIsTranslating] = useState(false);
 
   async function handleRun() {
     setIsRunning(true);
@@ -711,6 +714,26 @@ function QueryTab({
       setError(err instanceof Error ? err.message : 'Query failed');
     } finally {
       setIsRunning(false);
+    }
+  }
+
+  async function handleTranslate() {
+    if (!question.trim()) return;
+    setIsTranslating(true);
+    setError(null);
+    setResult(null);
+    try {
+      // The LLM only ever produces SQL text — it's shown here and re-runs
+      // through the exact same validated/sandboxed path as hand-typed SQL,
+      // so the rest of this tab (Run, Save as new version) needs no changes.
+      const { sql: translatedSql, preview } = await askInEnglish(datasetId, question);
+      setSql(translatedSql);
+      setResult(preview);
+      setLastRunSql(translatedSql);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not translate that into SQL');
+    } finally {
+      setIsTranslating(false);
     }
   }
 
@@ -729,6 +752,28 @@ function QueryTab({
 
   return (
     <div className="animate-fade-in">
+      <div className="flex items-center gap-3 mb-3">
+        <input
+          type="text"
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleTranslate(); } }}
+          placeholder="Ask in plain English — e.g. 'top 5 regions by revenue'…"
+          disabled={isTranslating}
+          className="flex-1 bg-warm-white/80 border border-dusty-rose/20 rounded-xl px-4 py-2.5 text-sm text-navy placeholder:text-navy/30 focus:outline-none focus:ring-2 focus:ring-lavender disabled:opacity-60"
+        />
+        <button
+          disabled={isTranslating || !question.trim()}
+          onClick={handleTranslate}
+          className="text-navy font-medium px-5 py-2.5 rounded-xl bg-peach-light/50 hover:bg-peach-light transition-all disabled:opacity-40 text-sm whitespace-nowrap"
+        >
+          {isTranslating ? 'Translating…' : 'Translate & Run'}
+        </button>
+      </div>
+      <p className="text-[11px] text-navy/40 mb-4">
+        Generates SQL with Gemini, shown below — always visible and editable before it runs again.
+      </p>
+
       <textarea
         value={sql}
         onChange={(e) => setSql(e.target.value)}

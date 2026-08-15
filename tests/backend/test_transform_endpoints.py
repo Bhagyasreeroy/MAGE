@@ -215,3 +215,97 @@ class TestQuery:
 
         versions = client.get(f"/analysis/datasets/{dataset_id}/versions", headers=headers).json()
         assert len(versions) == 2
+
+
+class TestNLQuery:
+    """Router-level tests for POST /datasets/{id}/query/nl — httpx.post is
+    monkeypatched so no real network/API key is needed."""
+
+    def test_translates_and_runs(self, monkeypatch) -> None:
+        import httpx
+
+        def _fake_post(*args, **kwargs):
+            class _R:
+                status_code = 200
+
+                def json(self):
+                    return {"candidates": [{"content": {"parts": [{"text": "SELECT * FROM df WHERE region = 'East'"}]}}]}
+
+            return _R()
+
+        monkeypatch.setattr(httpx, "post", _fake_post)
+        monkeypatch.setattr("backend.core.config.settings.gemini_api_key", "fake-key-for-test")
+
+        headers = _auth_headers()
+        dataset_id = _ingest(headers)
+        res = client.post(
+            f"/analysis/datasets/{dataset_id}/query/nl",
+            headers=headers,
+            json={"question": "show me east region rows"},
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert body["sql"] == "SELECT * FROM df WHERE region = 'East'"
+        assert body["preview"]["total_rows"] == 3
+
+    def test_does_not_persist(self, monkeypatch) -> None:
+        import httpx
+
+        def _fake_post(*args, **kwargs):
+            class _R:
+                status_code = 200
+
+                def json(self):
+                    return {"candidates": [{"content": {"parts": [{"text": "SELECT * FROM df"}]}}]}
+
+            return _R()
+
+        monkeypatch.setattr(httpx, "post", _fake_post)
+        monkeypatch.setattr("backend.core.config.settings.gemini_api_key", "fake-key-for-test")
+
+        headers = _auth_headers()
+        dataset_id = _ingest(headers)
+        client.post(
+            f"/analysis/datasets/{dataset_id}/query/nl", headers=headers, json={"question": "show everything"}
+        )
+        versions = client.get(f"/analysis/datasets/{dataset_id}/versions", headers=headers).json()
+        assert len(versions) == 1
+
+    def test_unconfigured_key_returns_400(self, monkeypatch) -> None:
+        monkeypatch.setattr("backend.core.config.settings.gemini_api_key", "")
+
+        headers = _auth_headers()
+        dataset_id = _ingest(headers)
+        res = client.post(
+            f"/analysis/datasets/{dataset_id}/query/nl",
+            headers=headers,
+            json={"question": "show everything"},
+        )
+        assert res.status_code == 400
+        assert "API key" in res.json()["detail"]
+
+    def test_translated_sql_can_be_saved(self, monkeypatch) -> None:
+        import httpx
+
+        def _fake_post(*args, **kwargs):
+            class _R:
+                status_code = 200
+
+                def json(self):
+                    return {"candidates": [{"content": {"parts": [{"text": "SELECT * FROM df WHERE region = 'East'"}]}}]}
+
+            return _R()
+
+        monkeypatch.setattr(httpx, "post", _fake_post)
+        monkeypatch.setattr("backend.core.config.settings.gemini_api_key", "fake-key-for-test")
+
+        headers = _auth_headers()
+        dataset_id = _ingest(headers)
+        nl_res = client.post(
+            f"/analysis/datasets/{dataset_id}/query/nl", headers=headers, json={"question": "east region rows"}
+        )
+        sql = nl_res.json()["sql"]
+
+        save_res = client.post(f"/analysis/datasets/{dataset_id}/query/save", headers=headers, json={"sql": sql})
+        assert save_res.status_code == 201
+        assert save_res.json()["transform_params"]["sql"] == sql

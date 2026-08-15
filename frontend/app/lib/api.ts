@@ -382,6 +382,17 @@ export async function saveQuery(datasetId: string, sql: string): Promise<Dataset
   });
 }
 
+export async function askInEnglish(
+  datasetId: string,
+  question: string,
+): Promise<{ sql: string; preview: DatasetPreview }> {
+  return apiFetch(`/analysis/datasets/${datasetId}/query/nl`, {
+    method: "POST",
+    auth: true,
+    body: JSON.stringify({ question }),
+  });
+}
+
 // ── File downloads (binary responses, not JSON) ─────────────────────────────
 
 /**
