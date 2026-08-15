@@ -13,6 +13,12 @@ Endpoints:
     GET  /analysis/history/{run_id}/export/json      - download the raw run as JSON
     GET  /analysis/history/{run_id}/export/citations - download a BibTeX citation bundle
     GET  /analysis/datasets         - list the current user's uploaded datasets
+    GET  /analysis/datasets/{id}                 - full detail for one dataset version
+    GET  /analysis/datasets/{id}/preview         - paginated rows (spreadsheet view)
+    GET  /analysis/datasets/{root_id}/versions   - every version sharing a lineage root
+    POST /analysis/datasets/{id}/transform       - apply cleaning ops / cell edits -> new version
+    POST /analysis/datasets/{id}/query           - read-only SQL preview (not persisted)
+    POST /analysis/datasets/{id}/query/save      - re-run a query, persist result -> new version
 
 All endpoints except /knowledge-sources require authentication — analysis
 runs and datasets are scoped to the authenticated user.
@@ -36,16 +42,23 @@ from backend.schemas.analysis import (
     AnalysisRequest,
     AnalysisResponse,
     AnalysisRunSummary,
+    ColumnStats,
+    ColumnSummary,
+    DatasetDetail,
+    DatasetPreview,
     DatasetSummary,
     ExpertiseLevel,
     IngestionResult,
     KnowledgeSource,
+    QueryRequest,
     SampleDataset,
+    TransformRequest,
 )
 from backend.schemas.auth import MessageResponse
-from backend.services import analysis_run_service, dataset_service, export_service
+from backend.services import analysis_run_service, dataset_service, export_service, transform_service
 from backend.services.orchestrator_service import OrchestratorService
 from data_pipeline.ingestion import IngestionError
+from data_pipeline.processing import ProcessingError
 from rag.knowledge_loader import KnowledgeBaseLoader
 
 logger = logging.getLogger(__name__)
@@ -350,6 +363,20 @@ async def export_run_citations(
     )
 
 
+def _to_summary(d) -> DatasetSummary:
+    return DatasetSummary(
+        id=d.id,
+        filename=d.filename,
+        row_count=d.row_count,
+        column_count=d.column_count,
+        created_at=d.created_at,
+        root_id=d.root_id,
+        parent_id=d.parent_id,
+        version=d.version,
+        transform_type=d.transform_type,
+    )
+
+
 @router.get(
     "/datasets",
     response_model=list[DatasetSummary],
@@ -361,16 +388,7 @@ async def list_datasets(
     db: AsyncSession = Depends(get_db),
 ) -> list[DatasetSummary]:
     datasets = await dataset_service.list_datasets(db, current_user.id)
-    return [
-        DatasetSummary(
-            id=d.id,
-            filename=d.filename,
-            row_count=d.row_count,
-            column_count=d.column_count,
-            created_at=d.created_at,
-        )
-        for d in datasets
-    ]
+    return [_to_summary(d) for d in datasets]
 
 
 @router.delete(
@@ -388,3 +406,141 @@ async def delete_dataset(
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dataset not found.")
     return MessageResponse(message="Dataset deleted.")
+
+
+async def _build_detail(dataset, *, report: list[str] | None = None) -> DatasetDetail:
+    """Profile a Dataset row's content into a DatasetDetail — reuses
+    IngestionAgent's column-summary logic rather than duplicating it."""
+    stored = dataset_service.as_stored_file(dataset)
+    try:
+        profile = _ingestion_agent.run(source=stored)
+    except IngestionError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return DatasetDetail(
+        **_to_summary(dataset).model_dump(),
+        column_summary=profile.column_summary,
+        transform_params=dataset.transform_params,
+        report=report,
+    )
+
+
+@router.get(
+    "/datasets/{dataset_id}/preview",
+    response_model=DatasetPreview,
+    status_code=status.HTTP_200_OK,
+    summary="Paginated rows for the spreadsheet view",
+)
+async def preview_dataset(
+    dataset_id: str,
+    offset: int = 0,
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DatasetPreview:
+    offset = max(0, offset)
+    limit = max(1, min(limit, 200))
+    try:
+        df = await transform_service.load_dataframe(db, current_user.id, dataset_id)
+    except transform_service.TransformNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return DatasetPreview(**transform_service.build_preview(df, offset, limit))
+
+
+@router.get(
+    "/datasets/{root_id}/versions",
+    response_model=list[DatasetSummary],
+    status_code=status.HTTP_200_OK,
+    summary="List every version sharing a lineage root, oldest first",
+)
+async def list_dataset_versions(
+    root_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[DatasetSummary]:
+    versions = await dataset_service.list_versions(db, current_user.id, root_id)
+    if not versions:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dataset not found.")
+    return [_to_summary(d) for d in versions]
+
+
+@router.post(
+    "/datasets/{dataset_id}/transform",
+    response_model=DatasetDetail,
+    status_code=status.HTTP_201_CREATED,
+    summary="Apply cleaning ops / cell edits, producing a new dataset version",
+)
+async def transform_dataset(
+    dataset_id: str,
+    request: TransformRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DatasetDetail:
+    ops = [op.model_dump() for op in request.ops]
+    try:
+        new_dataset, report = await transform_service.apply_transform(db, current_user.id, dataset_id, ops)
+    except transform_service.TransformNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ProcessingError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return await _build_detail(new_dataset, report=report)
+
+
+@router.get(
+    "/datasets/{dataset_id}",
+    response_model=DatasetDetail,
+    status_code=status.HTTP_200_OK,
+    summary="Fetch full detail for one dataset version",
+)
+async def get_dataset_detail(
+    dataset_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DatasetDetail:
+    dataset = await dataset_service.get_dataset(db, current_user.id, dataset_id)
+    if dataset is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dataset not found.")
+    return await _build_detail(dataset)
+
+
+@router.post(
+    "/datasets/{dataset_id}/query",
+    response_model=DatasetPreview,
+    status_code=status.HTTP_200_OK,
+    summary="Run a read-only SQL query against a dataset (preview only, not persisted)",
+)
+async def query_dataset(
+    dataset_id: str,
+    request: QueryRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DatasetPreview:
+    try:
+        result_df = await transform_service.run_query(db, current_user.id, dataset_id, request.sql)
+    except transform_service.TransformNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except transform_service.QueryValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return DatasetPreview(**transform_service.build_preview(result_df, 0, len(result_df)))
+
+
+@router.post(
+    "/datasets/{dataset_id}/query/save",
+    response_model=DatasetDetail,
+    status_code=status.HTTP_201_CREATED,
+    summary="Re-run a query server-side and persist the result as a new dataset version",
+)
+async def save_dataset_query(
+    dataset_id: str,
+    request: QueryRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DatasetDetail:
+    try:
+        new_dataset, row_count = await transform_service.save_query_result(
+            db, current_user.id, dataset_id, request.sql
+        )
+    except transform_service.TransformNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except transform_service.QueryValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return await _build_detail(new_dataset, report=[f"Saved query result: {row_count} row(s)."])
