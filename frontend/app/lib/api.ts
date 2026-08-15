@@ -222,6 +222,44 @@ export interface DatasetSummary {
   row_count: number | null;
   column_count: number | null;
   created_at: string;
+  root_id: string;
+  parent_id: string | null;
+  version: number;
+  transform_type: string | null;
+}
+
+export interface ColumnStats {
+  min: number | null;
+  max: number | null;
+  mean: number | null;
+  unique_count: number | null;
+}
+
+export interface ColumnSummary {
+  name: string;
+  dtype: string;
+  missing_count: number;
+  stats: ColumnStats | null;
+}
+
+export interface DatasetDetail extends DatasetSummary {
+  column_summary: ColumnSummary[];
+  transform_params: Record<string, unknown> | null;
+  report: string[] | null;
+}
+
+export interface DatasetPreview {
+  columns: string[];
+  dtypes: string[];
+  rows: unknown[][];
+  total_rows: number;
+  offset: number;
+  limit: number;
+}
+
+export interface TransformOp {
+  type: string;
+  [key: string]: unknown;
 }
 
 export async function registerUser(
@@ -299,6 +337,49 @@ export async function loadSampleDataset(filename: string): Promise<{ dataset_id:
 
 export async function deleteDataset(datasetId: string): Promise<void> {
   await apiFetch(`/analysis/datasets/${datasetId}`, { method: "DELETE", auth: true });
+}
+
+export async function fetchDatasetDetail(datasetId: string): Promise<DatasetDetail> {
+  return apiFetch<DatasetDetail>(`/analysis/datasets/${datasetId}`, { auth: true });
+}
+
+export async function fetchDatasetPreview(
+  datasetId: string,
+  offset = 0,
+  limit = 50,
+): Promise<DatasetPreview> {
+  return apiFetch<DatasetPreview>(
+    `/analysis/datasets/${datasetId}/preview?offset=${offset}&limit=${limit}`,
+    { auth: true },
+  );
+}
+
+export async function fetchDatasetVersions(rootId: string): Promise<DatasetSummary[]> {
+  return apiFetch<DatasetSummary[]>(`/analysis/datasets/${rootId}/versions`, { auth: true });
+}
+
+export async function applyTransform(datasetId: string, ops: TransformOp[]): Promise<DatasetDetail> {
+  return apiFetch<DatasetDetail>(`/analysis/datasets/${datasetId}/transform`, {
+    method: "POST",
+    auth: true,
+    body: JSON.stringify({ ops }),
+  });
+}
+
+export async function runQuery(datasetId: string, sql: string): Promise<DatasetPreview> {
+  return apiFetch<DatasetPreview>(`/analysis/datasets/${datasetId}/query`, {
+    method: "POST",
+    auth: true,
+    body: JSON.stringify({ sql }),
+  });
+}
+
+export async function saveQuery(datasetId: string, sql: string): Promise<DatasetDetail> {
+  return apiFetch<DatasetDetail>(`/analysis/datasets/${datasetId}/query/save`, {
+    method: "POST",
+    auth: true,
+    body: JSON.stringify({ sql }),
+  });
 }
 
 // ── File downloads (binary responses, not JSON) ─────────────────────────────
