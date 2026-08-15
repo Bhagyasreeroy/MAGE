@@ -393,6 +393,17 @@ export async function askInEnglish(
   });
 }
 
+export async function explainFinding(
+  finding: string,
+  goal: string = "",
+): Promise<{ explanation: string; sources: string[]; synthesized: boolean }> {
+  return apiFetch("/analysis/explain", {
+    method: "POST",
+    auth: true,
+    body: JSON.stringify({ finding, goal }),
+  });
+}
+
 // ── File downloads (binary responses, not JSON) ─────────────────────────────
 
 /**

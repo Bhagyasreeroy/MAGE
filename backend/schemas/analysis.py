@@ -332,3 +332,24 @@ class NLQueryResult(BaseModel):
 
     sql: str = Field(..., description="The SQL Gemini generated from the question.")
     preview: DatasetPreview
+
+
+class ExplainRequest(BaseModel):
+    """Body for POST /analysis/explain — a specific, already-computed
+    finding (a recommendation's own text, a feature-importance result)
+    the user wants a deeper, RAG-grounded explanation of."""
+
+    finding: str = Field(..., min_length=1, max_length=1000)
+    goal: str = Field(default="", max_length=2000)
+
+
+class ExplainResult(BaseModel):
+    """Always grounded — synthesized=False means the LLM wasn't used
+    (unconfigured, failed, or nothing to add) and this is the same raw
+    retrieved excerpt RecommendationAgent has always surfaced."""
+
+    explanation: str
+    sources: list[str]
+    synthesized: bool = Field(
+        ..., description="True if the LLM synthesized across multiple sources; False if this is a raw excerpt."
+    )

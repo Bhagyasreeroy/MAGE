@@ -19,6 +19,8 @@ Endpoints:
     POST /analysis/datasets/{id}/transform       - apply cleaning ops / cell edits -> new version
     POST /analysis/datasets/{id}/query           - read-only SQL preview (not persisted)
     POST /analysis/datasets/{id}/query/save      - re-run a query, persist result -> new version
+    POST /analysis/datasets/{id}/query/nl        - translate plain English into SQL, then run it
+    POST /analysis/explain                       - deeper RAG-grounded explanation of a finding
 
 All endpoints except /knowledge-sources require authentication — analysis
 runs and datasets are scoped to the authenticated user.
@@ -34,6 +36,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agents.explain_agent import ExplainAgent
 from agents.ingestion_agent import IngestionAgent
 from backend.core.database import get_db
 from backend.core.deps import get_current_user
@@ -48,6 +51,8 @@ from backend.schemas.analysis import (
     DatasetPreview,
     DatasetSummary,
     ExpertiseLevel,
+    ExplainRequest,
+    ExplainResult,
     IngestionResult,
     KnowledgeSource,
     NLQueryRequest,
@@ -69,6 +74,7 @@ router = APIRouter()
 
 _orchestrator_service = OrchestratorService()
 _ingestion_agent = IngestionAgent()
+_explain_agent = ExplainAgent()
 
 # Bundled demo datasets a user can load without having the file on their own
 # machine. Keyed by filename in data/samples/; anything in that directory but
@@ -580,3 +586,21 @@ async def nl_query_dataset(
         sql=sql,
         preview=DatasetPreview(**transform_service.build_preview(result_df, 0, len(result_df))),
     )
+
+
+@router.post(
+    "/explain",
+    response_model=ExplainResult,
+    status_code=status.HTTP_200_OK,
+    summary="Deeper, RAG-grounded explanation of a specific finding (LLM-synthesized when configured)",
+)
+async def explain_finding(
+    request: ExplainRequest,
+    current_user: User = Depends(get_current_user),
+) -> ExplainResult:
+    """Stateless — the frontend already has the finding text client-side
+    from the already-fetched analysis result, so no run_id lookup is
+    needed. Always grounded: falls back to a raw retrieved excerpt
+    (synthesized=False) rather than ever returning ungrounded LLM text."""
+    result = _explain_agent.explain(request.finding, request.goal)
+    return ExplainResult(**result)
