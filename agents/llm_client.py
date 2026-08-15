@@ -28,7 +28,12 @@ from backend.core.config import settings
 logger = logging.getLogger(__name__)
 
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-DEFAULT_MODEL = "gemini-2.0-flash"
+# Gemini model availability shifts over time (gemini-2.0-flash was retired
+# entirely; the "-latest" alias was observed returning 503s while this
+# pinned version responded normally) — if this starts 404ing, check
+# GET https://generativelanguage.googleapis.com/v1beta/models?key=... for
+# what's currently live on the configured key.
+DEFAULT_MODEL = "gemini-2.5-flash"
 DEFAULT_TIMEOUT = 20.0
 
 
