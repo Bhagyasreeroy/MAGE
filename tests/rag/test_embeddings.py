@@ -10,7 +10,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from rag.embeddings import EMBEDDING_DIM, embed_batch, embed_text
+from rag.embeddings import EMBEDDING_DIM, embed_batch, embed_text, warm_up
 
 
 class TestEmbedText:
@@ -48,3 +48,32 @@ class TestEmbedBatch:
         batch = embed_batch(texts)
         individual = np.stack([embed_text(t) for t in texts])
         assert np.allclose(batch, individual, atol=1e-5)
+
+
+class TestWarmUp:
+    """
+    The model otherwise loads on first use (~10s), stalling whichever analysis
+    happens to run first after a restart — very visible in the live stream.
+    The app calls this at startup to move that cost to boot.
+    """
+
+    def test_reports_success(self) -> None:
+        assert warm_up() is True
+
+    def test_is_idempotent(self) -> None:
+        assert warm_up() is True
+        assert warm_up() is True
+
+    def test_leaves_the_model_usable(self) -> None:
+        warm_up()
+        assert embed_text("clustering methodology").shape == (EMBEDDING_DIM,)
+
+    def test_failure_is_reported_not_raised(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A broken warm-up must degrade to the lazy path, never crash startup."""
+        import rag.embeddings as embeddings
+
+        def boom() -> None:
+            raise RuntimeError("no weights available")
+
+        monkeypatch.setattr(embeddings, "_get_model", boom)
+        assert embeddings.warm_up() is False

@@ -2,13 +2,15 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
+import { AgentStream } from '../../../components/agent-stream';
 import {
-  authFetchFormData,
   fetchCurrentUser,
   fetchSampleDatasets,
+  ingestDataset,
   loadSampleDataset,
   type SampleDataset,
 } from '../../../lib/api';
+import { useAnalysisStream } from '../../../lib/use-analysis-stream';
 
 type ExpertiseLevel = 'beginner' | 'intermediate' | 'expert';
 
@@ -30,10 +32,13 @@ const MicroscopeIcon = () => (
   </svg>
 );
 
+// Labels follow the three audiences named in the project spec. The stored
+// values stay `beginner` / `intermediate` / `expert` — they are the API enum
+// and are persisted on the user record, so only the display text changes.
 const EXPERTISE_OPTIONS: { value: ExpertiseLevel; label: string; icon: React.ReactNode; description: string }[] = [
-  { value: 'beginner', label: 'Beginner', icon: <SeedIcon />, description: 'Plain language, step-by-step explanations' },
-  { value: 'intermediate', label: 'Intermediate', icon: <ChartUpIcon />, description: 'Concise insights with key statistics' },
-  { value: 'expert', label: 'Expert', icon: <MicroscopeIcon />, description: 'Dense technical recommendations' },
+  { value: 'beginner', label: 'Beginner', icon: <SeedIcon />, description: 'Plain language, no statistical jargon' },
+  { value: 'intermediate', label: 'Analyst', icon: <ChartUpIcon />, description: 'Each finding with the statistic behind it' },
+  { value: 'expert', label: 'Data Scientist', icon: <MicroscopeIcon />, description: 'Full methodology, with citations in context' },
 ];
 
 export default function NewAnalysisPage() {
@@ -43,13 +48,18 @@ export default function NewAnalysisPage() {
   const [goal, setGoal] = useState('');
   const [expertiseLevel, setExpertiseLevel] = useState<ExpertiseLevel>('intermediate');
   const [file, setFile] = useState<File | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  // Covers the upload that happens *before* the socket opens; once the stream
+  // starts, `stream.phase` is the source of truth for progress.
+  const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [sampleDatasets, setSampleDatasets] = useState<SampleDataset[]>([]);
   const [selectedSample, setSelectedSample] = useState<SampleDataset | null>(null);
   const [sampleDatasetId, setSampleDatasetId] = useState<string | null>(null);
   const [loadingSample, setLoadingSample] = useState<string | null>(null);
+
+  const stream = useAnalysisStream();
+  const isRunning = isUploading || stream.phase === 'connecting' || stream.phase === 'running';
 
   useEffect(() => {
     fetchCurrentUser()
@@ -86,29 +96,32 @@ export default function NewAnalysisPage() {
     setSampleDatasetId(null);
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!goal.trim()) return;
+  // Hold on the finished trail briefly before navigating, so the last agent's
+  // result is legible rather than flashing past on the way to the report.
+  useEffect(() => {
+    if (stream.phase !== 'complete' || !stream.runId) return;
+    const timer = setTimeout(() => router.push(`/dashboard/analysis/${stream.runId}`), 900);
+    return () => clearTimeout(timer);
+  }, [stream.phase, stream.runId, router]);
 
-    setIsLoading(true);
+  // React 19 deprecates `FormEvent` in favour of the event type that actually
+  // fires — `SubmitEvent` for a form submission.
+  async function handleSubmit(e: React.SubmitEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!goal.trim() || isRunning) return;
+
     setError(null);
+    setIsUploading(true);
 
     try {
-      const formData = new FormData();
-      formData.append('goal', goal.trim());
-      formData.append('expertise_level', expertiseLevel);
-      if (file) {
-        formData.append('file', file);
-      } else if (sampleDatasetId) {
-        formData.append('dataset_id', sampleDatasetId);
-      }
-
-      const data = await authFetchFormData<{ run_id: string }>('/analysis/run', formData);
-      router.push(`/dashboard/analysis/${data.run_id}`);
+      // The socket carries a dataset id, not file bytes, so any new upload is
+      // persisted over HTTP first. A selected sample dataset already has an id.
+      const datasetId = file ? (await ingestDataset(file)).dataset_id : sampleDatasetId;
+      stream.start({ goal, expertiseLevel, datasetId });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
     } finally {
-      setIsLoading(false);
+      setIsUploading(false);
     }
   }
 
@@ -278,16 +291,19 @@ export default function NewAnalysisPage() {
         <button
           id="run-analysis-btn"
           type="submit"
-          disabled={isLoading || goal.trim().length < 5}
+          disabled={isRunning || stream.phase === 'complete' || goal.trim().length < 5}
           className="w-full bg-navy text-cream font-semibold py-5 rounded-[2rem] hover:bg-navy-light disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:-translate-y-1 shadow-xl shadow-navy/15 flex items-center justify-center gap-3 text-base"
         >
-          {isLoading ? (
+          {isRunning || stream.phase === 'complete' ? (
             <>
               <svg className="animate-spin w-5 h-5 text-cream/70" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
-              Running agents…
+              {isUploading && 'Uploading dataset…'}
+              {stream.phase === 'connecting' && 'Connecting…'}
+              {stream.phase === 'running' && 'Running agents…'}
+              {stream.phase === 'complete' && 'Opening your report…'}
             </>
           ) : (
             <>
@@ -298,6 +314,19 @@ export default function NewAnalysisPage() {
             </>
           )}
         </button>
+
+        {/* Live agent trail — appears as soon as a run starts */}
+        <AgentStream phase={stream.phase} steps={stream.steps} error={stream.error} />
+
+        {stream.phase === 'error' && (
+          <button
+            type="button"
+            onClick={stream.cancel}
+            className="w-full text-sm text-navy/50 underline underline-offset-4 hover:text-navy transition-colors"
+          >
+            Reset and try again
+          </button>
+        )}
       </form>
     </div>
   );

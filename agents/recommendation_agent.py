@@ -20,9 +20,18 @@ Two paths, tried in order:
    than surfacing the raw excerpt alone, which reads as generic textbook
    material disconnected from the user's actual data.
 
-Recommendation text is produced in two registers:
-    - ``text_technical`` : dense, for analysts / data scientists.
-    - ``text_plain``     : plain-language paraphrase, for beginners.
+Recommendation text is produced in three registers (FR-04), one per expertise
+level the system offers:
+    - ``text_plain``     : plain language, no jargon — **Beginner**.
+    - ``text_analyst``   : the finding plus the statistic supporting it, in
+      working language but without full methodological framing — **Analyst**.
+    - ``text_technical`` : the finding in context with the complete
+      methodology excerpt, markdown intact — **Data Scientist**.
+
+The three are deliberately nested rather than independently written: each
+level adds detail the one below omits, so a reader moving up a level never
+loses information they had. ``ANALYST_SENTENCES`` and ``PLAIN_SENTENCES`` set
+where each stops.
 
 **LLM mode** (opt-in, ``context["mode"] == "llm"``): bypasses both paths
 above entirely. Instead of retrieval, the dataset's already-computed
@@ -56,6 +65,13 @@ MAX_RECOMMENDATIONS = 5
 # recommendation in and are dropped rather than surfaced with low confidence.
 MIN_CONFIDENCE = 0.15
 
+# How much of the retrieved methodology each register keeps. The technical
+# register is uncapped (it keeps the whole excerpt), so these two are what
+# separate the three levels — keep them distinct or the registers converge and
+# FR-04's "visibly alters output language" stops being true.
+PLAIN_SENTENCES = 2
+ANALYST_SENTENCES = 4
+
 _MARKDOWN_STRIP_RE = re.compile(r"[#*`|>]|^-\s+", re.MULTILINE)
 _WHITESPACE_RE = re.compile(r"\s+")
 _HEADING_RE = re.compile(r"(?m)^\s*#{1,6}\s*")
@@ -71,26 +87,88 @@ def _get(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
-def _strip_markdown_structure(text: str) -> str:
-    """Drop markdown tables and headings from a retrieved knowledge-base chunk.
+def _is_separator_row(line: str) -> bool:
+    """True for ``|---|:--:|`` separators and bare horizontal rules."""
+    return bool(line) and set(line) <= set("-|:= ")
 
-    Chunks contain markdown tables (``| Goal | Chart |``) and ``|---|---|``
-    separator rows. Inlined into a recommendation sentence these flatten into
-    unreadable runs of cell text ("numeric Line chart ... Choropleth ..."), so
-    we remove whole table lines rather than just stripping the pipe characters.
-    Prose before/after the table is preserved.
+
+def _split_row(line: str) -> list[str]:
+    """Split one markdown table row into stripped cell values."""
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _table_block_to_sentences(block: list[str]) -> list[str]:
     """
-    kept: list[str] = []
+    Rewrite one markdown table as one labelled sentence per row.
+
+    ``| Goal | Chart |`` / ``| Compare groups | Box plot |`` becomes
+    ``Goal: Compare groups; Chart: Box plot.`` — the header row supplies the
+    field names rather than being emitted as content.
+
+    This is the point of the whole function. Several knowledge-base documents
+    carry their real guidance as a decision table, so dropping tables meant
+    those documents contributed only their headings. Inlining the raw cells
+    instead produces an unreadable run ("numeric Line chart … Choropleth …"),
+    which is why the values are labelled.
+    """
+    rows = [_split_row(line) for line in block if not _is_separator_row(line)]
+    if not rows:
+        return []
+
+    headers, data_rows = rows[0], rows[1:]
+    if not data_rows:
+        # A single row with no body is a header with nothing under it; keep the
+        # values rather than inventing labels for them.
+        return [" ".join(cell for cell in headers if cell)]
+
+    sentences: list[str] = []
+    for cells in data_rows:
+        parts: list[str] = []
+        for index, cell in enumerate(cells):
+            if not cell:
+                continue  # an empty cell labelled "Header:" is noise
+            label = headers[index] if index < len(headers) else ""
+            parts.append(f"{label}: {cell}" if label else cell)
+        if parts:
+            sentences.append("; ".join(parts) + ".")
+    return sentences
+
+
+def _flatten_markdown_tables(text: str) -> str:
+    """Replace every markdown table in `text` with labelled per-row sentences."""
+    out: list[str] = []
+    block: list[str] = []
+
+    def flush() -> None:
+        if block:
+            out.extend(_table_block_to_sentences(block))
+            block.clear()
+
     for line in text.splitlines():
         stripped = line.strip()
-        # Separator rows like |---|:--:| or a bare horizontal rule.
-        if stripped and set(stripped) <= set("-|:= "):
-            continue
-        # Table rows: two or more pipe cell separators.
         if stripped.count("|") >= 2:
-            continue
-        kept.append(line)
-    joined = "\n".join(kept)
+            block.append(stripped)
+        elif _is_separator_row(stripped):
+            # Inside a table this is the header separator; outside it is a bare
+            # horizontal rule, which carries nothing worth keeping.
+            if block:
+                block.append(stripped)
+        else:
+            flush()
+            out.append(line)
+    flush()
+    return "\n".join(out)
+
+
+def _strip_markdown_structure(text: str) -> str:
+    """Convert a retrieved knowledge-base chunk into plain readable prose.
+
+    Tables are rewritten row-by-row into labelled sentences (see
+    :func:`_table_block_to_sentences`) rather than discarded; headings and
+    inline emphasis markers are removed. Prose before and after a table is
+    preserved in place.
+    """
+    joined = _flatten_markdown_tables(text)
     joined = _HEADING_RE.sub("", joined)      # drop "## Heading" markers
     joined = _INLINE_MD_RE.sub("", joined)    # drop * ` _ emphasis
     return joined
@@ -115,14 +193,44 @@ def _clean_technical(text: str) -> str:
     return result or _WHITESPACE_RE.sub(" ", cleaned).strip() or text.strip()
 
 
-def _simplify(text: str) -> str:
-    """Plain-language: strip Markdown, return the first couple of complete sentences."""
+def _first_sentences(text: str, limit: int) -> str:
+    """Strip Markdown and return the first `limit` complete sentences."""
     cleaned = _strip_markdown_structure(text)
     cleaned = _MARKDOWN_STRIP_RE.sub(" ", cleaned)
     cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip()
     sentences = _drop_leading_fragment([s for s in re.split(r"(?<=[.!?])\s+", cleaned) if s.strip()])
-    plain = " ".join(sentences[:2]).strip()
-    return plain or cleaned[:200]
+    trimmed = " ".join(sentences[:limit]).strip()
+    return trimmed or cleaned[:200]
+
+
+def _simplify(text: str) -> str:
+    """Plain-language register (Beginner): Markdown stripped, first couple of sentences."""
+    return _first_sentences(text, PLAIN_SENTENCES)
+
+
+def _analyst(text: str, title: str) -> str:
+    """
+    Analyst register: working language, attributed, with the reasoning kept.
+
+    Two things separate this from the plain register:
+
+    * **More of the excerpt** — ``ANALYST_SENTENCES`` rather than
+      ``PLAIN_SENTENCES``, so the reasoning behind the advice survives and not
+      just its headline. Markdown is still stripped; an analyst wants the
+      substance, not the document structure.
+    * **Inline attribution** — the methodology is named in the sentence. This
+      is not decoration: it is the difference between "handle the missing
+      values" and knowing *which* documented procedure is being invoked, which
+      is precisely what a working analyst needs in order to check it.
+
+    The attribution also makes the separation *structural* rather than merely
+    a matter of length. Several knowledge-base chunks are a single sentence
+    long, and against those a purely length-based rule collapses this register
+    onto the plain one — which would quietly break FR-04 for exactly the
+    recommendations whose source is shortest.
+    """
+    body = _first_sentences(text, ANALYST_SENTENCES)
+    return f"Per {title}: {body}" if title else body
 
 
 class RecommendationAgent:
@@ -170,6 +278,20 @@ class RecommendationAgent:
                 )
         self._kb_loaded = True
 
+    @staticmethod
+    def _prior_runs(context: dict[str, Any]) -> list[dict[str, Any]]:
+        """
+        Prior-run memory from the context, defensively normalised.
+
+        Supplied by the service layer, which owns the database. Anything
+        malformed is discarded rather than raised on: memory is additive
+        grounding, and a bad memory row must not be able to fail an analysis.
+        """
+        prior = context.get("prior_runs")
+        if not isinstance(prior, list):
+            return []
+        return [run for run in prior if isinstance(run, dict)]
+
     def _build_query(self, context: dict[str, Any]) -> str:
         """Compose a goal-conditioned retrieval query from goal + upstream findings."""
         parts = [str(context.get("goal", ""))]
@@ -181,6 +303,13 @@ class RecommendationAgent:
         ingestion_output = context.get("IngestionAgent_output")
         warnings = _get(ingestion_output, "warnings", []) or []
         parts.extend(str(w) for w in warnings)
+
+        # What this user previously found on comparable questions (Objective 4).
+        # Appended last so the current goal and this run's own findings still
+        # dominate the query — history informs retrieval, it does not replace
+        # the present question.
+        for run in self._prior_runs(context):
+            parts.extend(str(f) for f in (run.get("findings") or []))
 
         return " ".join(p for p in parts if p)
 
@@ -213,13 +342,21 @@ class RecommendationAgent:
                 "recommendations": [
                     {
                         "insight": "Computed from your data",
+                        # A direct factual answer is a computed number — there
+                        # is no methodology excerpt to expand or compress, so
+                        # all three registers are deliberately identical here.
+                        # Paraphrasing a statistic per audience would change
+                        # the wording without changing the information, which
+                        # is presentation, not adaptation.
                         "text_technical": qa_answer.text,
+                        "text_analyst": qa_answer.text,
                         "text_plain": qa_answer.text,
                         "confidence": 1.0,
                         "sources": sources,
                     }
                 ],
                 "rag_sources": sources,
+                "prior_runs": self._prior_runs(context),
                 "message": "Answered directly from computed statistics.",
             }
 
@@ -229,6 +366,7 @@ class RecommendationAgent:
             return {
                 "recommendations": [],
                 "rag_sources": [],
+                "prior_runs": self._prior_runs(context),
                 "message": "No goal or upstream findings to ground recommendations in.",
             }
 
@@ -254,6 +392,9 @@ class RecommendationAgent:
                     # "# Heading" mid-line, where Markdown can't recognize
                     # it as a heading anymore.
                     "text_technical": f"**{pattern}**\n\n{_clean_technical(hit['text'])}",
+                    "text_analyst": (
+                        f"{pattern} {_analyst(hit['text'], hit['metadata'].get('title', ''))}"
+                    ),
                     "text_plain": f"{pattern} {_simplify(hit['text'])}",
                     "confidence": round(min(max(hit["score"], 0.0), 1.0), 3),
                     "sources": [hit["source"]],
@@ -274,6 +415,7 @@ class RecommendationAgent:
                     {
                         "insight": hit["metadata"].get("title", hit["source"]),
                         "text_technical": _clean_technical(hit["text"]),
+                        "text_analyst": _analyst(hit["text"], hit["metadata"].get("title", "")),
                         "text_plain": _simplify(hit["text"]),
                         "confidence": round(min(max(hit["score"], 0.0), 1.0), 3),
                         "sources": [hit["source"]],
@@ -285,6 +427,10 @@ class RecommendationAgent:
         return {
             "recommendations": recommendations,
             "rag_sources": rag_sources,
+            # Surfaced for display, deliberately separate from `rag_sources`:
+            # a prior run is context the user can recognise, not retrievable
+            # methodology, and FR-03's citation promise covers only the latter.
+            "prior_runs": self._prior_runs(context),
             "message": f"Generated {len(recommendations)} RAG-grounded recommendation(s).",
         }
 

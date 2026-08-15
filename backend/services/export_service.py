@@ -12,6 +12,7 @@ import io
 import json
 from datetime import datetime
 from typing import Any
+from xml.sax.saxutils import escape
 
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.graphics.charts.lineplots import LinePlot
@@ -59,6 +60,21 @@ def _source_titles() -> dict[str, str]:
             for chunk in KnowledgeBaseLoader().load_all()
         }
     return _TITLE_CACHE
+
+
+def _esc(value: Any) -> str:
+    """
+    Make arbitrary text safe to put inside a ReportLab ``Paragraph``.
+
+    Paragraph parses its input as mini-XML, so unescaped user text is not
+    merely a formatting nuisance — a goal containing ``<b `` raises
+    ``paraparser: syntax error`` and fails the whole export with a 500, while
+    something like ``<revenue>`` is silently swallowed as an unknown tag and
+    the text disappears from the report. Both are reachable from anything a
+    user can type into a goal, and from any column name in their data, since
+    agent observations quote column names back.
+    """
+    return escape("" if value is None else str(value))
 
 
 def _step_output(run: AnalysisRun, agent_name: str) -> dict[str, Any]:
@@ -269,6 +285,89 @@ def _spec_to_flowable(spec: dict[str, Any]) -> Any | None:
 
 # ── PDF report ────────────────────────────────────────────────────────────
 
+def _agent_trail_flowables(
+    run: AnalysisRun, heading_style: ParagraphStyle, body_style: ParagraphStyle,
+) -> list[Any]:
+    """
+    Render the Reason/Act/Observe log as a table (FR-06).
+
+    The step log is the project's explainability trail, and until now it
+    existed only in the JSON export — absent from the PDF, which is the
+    artefact a reader actually opens. Including it here is what makes the
+    claim "every agent step is inspectable" true of the deliverable and not
+    just of the API.
+
+    Reasoning and observation are wrapped in ``Paragraph`` rather than passed
+    as bare strings so long text wraps inside its cell instead of overflowing
+    the page width.
+    """
+    steps = run.steps or []
+    if not steps:
+        return []
+
+    navy = colors.HexColor("#22223b")
+    dusty_rose = colors.HexColor("#9a8c98")
+    cell_style = ParagraphStyle(
+        "MageTrailCell", parent=body_style, fontSize=8, leading=10.5,
+    )
+    header_style = ParagraphStyle(
+        "MageTrailHeader", parent=cell_style, textColor=colors.white,
+        fontName="Helvetica-Bold",
+    )
+
+    rows: list[list[Any]] = [[
+        Paragraph(label, header_style)
+        for label in ("#", "Agent", "Reasoning", "Observation", "Status", "Latency")
+    ]]
+    for index, step in enumerate(steps, start=1):
+        # "RecommendationAgent" does not fit the column and wraps mid-word; the
+        # column is already headed "Agent", so the suffix carries no meaning.
+        agent = str(step.get("agent_name") or "—")
+        agent = agent[: -len("Agent")] if agent.endswith("Agent") and agent != "Agent" else agent
+        rows.append([
+            Paragraph(str(index), cell_style),
+            Paragraph(_esc(agent), cell_style),
+            Paragraph(_esc(step.get("reasoning", "")), cell_style),
+            Paragraph(_esc(step.get("observation", "")), cell_style),
+            Paragraph(_esc(step.get("status", "")), cell_style),
+            Paragraph(f"{step.get('latency_ms', 0)} ms", cell_style),
+        ])
+
+    table = Table(
+        rows,
+        hAlign="LEFT",
+        repeatRows=1,  # re-print the header if the trail splits across pages
+        colWidths=[0.3 * inch, 1.05 * inch, 2.1 * inch, 2.1 * inch, 0.6 * inch, 0.6 * inch],
+    )
+    table.setStyle(
+        TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), navy),
+            ("GRID", (0, 0), (-1, -1), 0.5, dusty_rose),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f2e9e4")]),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ])
+    )
+
+    total_ms = sum(int(s.get("latency_ms") or 0) for s in steps)
+    caption = ParagraphStyle(
+        "MageTrailCaption", parent=body_style, fontSize=8.5,
+        textColor=dusty_rose, spaceBefore=6,
+    )
+    return [
+        Paragraph("Agent Execution Trail", heading_style),
+        Paragraph(
+            "Every step the pipeline executed, in order, with the reasoning that "
+            "selected it and what it observed. This is the full inspectable trail — "
+            "nothing below is reconstructed after the fact.",
+            ParagraphStyle("MageTrailIntro", parent=body_style, spaceAfter=8),
+        ),
+        table,
+        Paragraph(f"{len(steps)} step(s), {total_ms} ms total agent time.", caption),
+    ]
+
+
 def generate_pdf(run: AnalysisRun) -> bytes:
     """Render a PDF report: summary, data quality, recommendations, citations."""
     buffer = io.BytesIO()
@@ -306,9 +405,9 @@ def generate_pdf(run: AnalysisRun) -> bytes:
             meta_style,
         ),
         Paragraph("Goal", heading_style),
-        Paragraph(run.goal, body_style),
+        Paragraph(_esc(run.goal), body_style),
         Paragraph("Executive Summary", heading_style),
-        Paragraph(run.summary or "No summary available.", body_style),
+        Paragraph(_esc(run.summary) or "No summary available.", body_style),
     ]
 
     # ── Data Quality table (from MiningAgent's stored output, if present) ──
@@ -347,7 +446,7 @@ def generate_pdf(run: AnalysisRun) -> bytes:
     story.append(Paragraph("Recommendations", heading_style))
     if run.recommendations:
         for i, rec in enumerate(run.recommendations, start=1):
-            story.append(Paragraph(f"{i}. {rec}", body_style))
+            story.append(Paragraph(f"{i}. {_esc(rec)}", body_style))
             story.append(Spacer(1, 6))
     else:
         story.append(Paragraph("No recommendations were grounded for this goal.", body_style))
@@ -357,9 +456,16 @@ def generate_pdf(run: AnalysisRun) -> bytes:
     titles = _source_titles()
     if run.rag_sources:
         for source in run.rag_sources:
-            story.append(Paragraph(f"&bull; {titles.get(source, source)} ({source})", body_style))
+            story.append(
+                Paragraph(
+                    f"&bull; {_esc(titles.get(source, source))} ({_esc(source)})", body_style
+                )
+            )
     else:
         story.append(Paragraph("No knowledge-base sources were cited.", body_style))
+
+    # ── Agent Execution Trail (FR-06) ─────────────────────────────────────
+    story.extend(_agent_trail_flowables(run, heading_style, body_style))
 
     doc.build(story)
     return buffer.getvalue()

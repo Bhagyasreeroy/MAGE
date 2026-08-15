@@ -75,4 +75,16 @@ Project_Presentation.pptx (2).pdf
 
 mage.db
 
+# ─── Generated reports ───────────────────────────────────────────────────────
+# Built by scripts/generate_project_report.py, which IS tracked. The PDF is
+# regenerated from it on demand, so committing it would only churn the diff.
+MAGE_Project_Report.pdf
+
+# ─── Evaluation ──────────────────────────────────────────────────────────────
+# Datasets are regenerated deterministically by the harness on every run, so
+# the CSVs are build output. results.json / results.md are NOT ignored — they
+# are the reported deliverable and should be committed with the code that
+# produced them.
+evaluation/_data/
+
 

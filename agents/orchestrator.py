@@ -23,6 +23,7 @@ deliberately isolated from one another.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from time import perf_counter
 from typing import Any
 
@@ -38,6 +39,18 @@ logger = logging.getLogger(__name__)
 
 # Maximum number of ReAct iterations before the loop halts (runaway guard).
 MAX_REACT_STEPS = 10
+
+# FR-04 — which recommendation register each expertise level reads.
+# ExpertiseLevel value → RecommendationAgent field, mapping the system's enum
+# onto the three audiences the proposal names:
+#   beginner     → Beginner        (plain language, no jargon)
+#   intermediate → Analyst         (finding + the statistic behind it)
+#   expert       → Data Scientist  (full methodology, markdown intact)
+_REGISTER_BY_EXPERTISE: dict[str, str] = {
+    "beginner": "text_plain",
+    "intermediate": "text_analyst",
+    "expert": "text_technical",
+}
 
 
 class OrchestratorAgent:
@@ -67,6 +80,7 @@ class OrchestratorAgent:
         expertise_level: str = "intermediate",
         data: dict[str, Any] | None = None,
         mode: str = "rag",
+        on_step: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """
         Execute the goal-conditioned, ReAct-style EDA pipeline.
@@ -82,6 +96,15 @@ class OrchestratorAgent:
         mode : str
             "rag" (default, grounded/cited) or "llm" (freeform Gemini
             response) — read by RecommendationAgent only.
+        on_step : callable, optional
+            Invoked with each step dict immediately after it is appended to the
+            log, enabling live streaming of the Reason/Act/Observe trail while
+            the pipeline is still running. Defaults to ``None``, in which case
+            behaviour is byte-for-byte identical to a run without it.
+
+            The callback is **advisory**: exceptions raised by it are logged
+            and swallowed. A disconnected WebSocket client must not be able to
+            abort an analysis that is already underway.
 
         Returns
         -------
@@ -98,6 +121,14 @@ class OrchestratorAgent:
             "mode": mode,
         }
 
+        # Prior-run memory arrives on the data payload (the service layer owns
+        # the database) but is consumed by the RecommendationAgent as ordinary
+        # context, so lift it to the top level here rather than making every
+        # agent reach into `data` for it.
+        prior_runs = (data or {}).get("prior_runs")
+        if prior_runs:
+            context["prior_runs"] = prior_runs
+
         # 1. Classify the goal → task type. (Rules work on the goal text alone;
         #    the target column is refined once ingestion reveals the schema.)
         classification = self._classifier.classify(goal)
@@ -108,6 +139,17 @@ class OrchestratorAgent:
 
         # 3. ReAct loop.
         steps: list[dict[str, Any]] = []
+
+        def emit(step: dict[str, Any]) -> None:
+            """Append a step to the log and, if streaming, publish it."""
+            steps.append(step)
+            if on_step is None:
+                return
+            try:
+                on_step(step)
+            except Exception:  # noqa: BLE001 - a listener must never break the pipeline
+                logger.warning("on_step callback raised; continuing run.", exc_info=True)
+
         for step_idx, planned in enumerate(plan):
             if step_idx >= MAX_REACT_STEPS:
                 logger.warning("ReAct step limit (%d) reached — halting.", MAX_REACT_STEPS)
@@ -115,7 +157,7 @@ class OrchestratorAgent:
 
             agent = self._agents.get(planned.agent_name)
             if agent is None:
-                steps.append(
+                emit(
                     self._step(planned.agent_name, "skip", planned.reason,
                                f"No agent registered for {planned.agent_name}.", "skipped", 0, {})
                 )
@@ -148,7 +190,7 @@ class OrchestratorAgent:
 
             # OBSERVE — record the step and update session state.
             observation = self._summarize(planned.agent_name, output_dict, status)
-            steps.append(
+            emit(
                 self._step(
                     planned.agent_name,
                     f"run {planned.agent_name} with directives {list(directives.keys())}",
@@ -216,8 +258,17 @@ class OrchestratorAgent:
             recommendation_output = recommendation_output.model_dump()
         structured_recs = recommendation_output.get("recommendations", [])
 
-        text_field = "text_plain" if expertise_level == "beginner" else "text_technical"
-        recommendations = [rec.get(text_field, rec.get("insight", "")) for rec in structured_recs]
+        # FR-04 — the reader's declared expertise selects the register. Three
+        # levels, three registers; the enum values are the system's, the names
+        # in comments are the spec's.
+        text_field = _REGISTER_BY_EXPERTISE.get(expertise_level, "text_technical")
+        recommendations = [
+            # Fall back down the registers rather than to the bare insight, so
+            # an older persisted run written before `text_analyst` existed
+            # still renders prose instead of a one-line title.
+            rec.get(text_field) or rec.get("text_technical") or rec.get("insight", "")
+            for rec in structured_recs
+        ]
         rag_sources = recommendation_output.get("rag_sources", [])
 
         return {
