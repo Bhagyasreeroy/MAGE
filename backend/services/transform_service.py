@@ -20,12 +20,14 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import re
 from typing import Any
 
 import numpy as np
 import pandas as pd
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agents.llm_client import GeminiClient, LLMError
 from backend.models.dataset import Dataset
 from backend.services import dataset_service
 from data_pipeline.ingestion import DataIngestionEngine
@@ -104,6 +106,50 @@ async def run_query(db: AsyncSession, user_id: str, dataset_id: str, sql: str) -
     table — callers decide whether to persist the result (save_query_result)."""
     _validate_single_select(sql)
     df = await load_dataframe(db, user_id, dataset_id)
+    return await _run_sql_against_df(df, sql)
+
+
+async def generate_sql_from_question(
+    db: AsyncSession,
+    user_id: str,
+    dataset_id: str,
+    question: str,
+    llm_client: GeminiClient | None = None,
+) -> tuple[str, pd.DataFrame]:
+    """Translate a plain-English question into SQL grounded in the dataset's
+    real column names/dtypes (schema only — never raw rows), then run it
+    through the exact same validation + sandboxed execution as hand-typed
+    SQL. The LLM only ever produces SQL text, so this introduces no new
+    trust boundary: a hallucinated read_csv(...) is blocked the same way a
+    malicious hand-typed one already is.
+
+    Fresh GeminiClient per call (not a module-level singleton like
+    _ingestion_engine/_processing_engine) so it always reads current
+    settings rather than freezing an api_key at import time.
+    """
+    client = llm_client or GeminiClient()
+    df = await load_dataframe(db, user_id, dataset_id)
+
+    if not client.is_configured:
+        raise QueryValidationError(
+            "Ask-in-English needs a Gemini API key configured (GEMINI_API_KEY) — write SQL directly instead."
+        )
+
+    prompt = _build_nl_to_sql_prompt(df, question)
+    try:
+        raw = client.generate(prompt)
+    except LLMError as exc:
+        raise QueryValidationError(f"Could not translate that into SQL: {exc}") from exc
+
+    sql = _extract_sql(raw)
+    _validate_single_select(sql)
+    result = await _run_sql_against_df(df, sql)
+    return sql, result
+
+
+async def _run_sql_against_df(df: pd.DataFrame, sql: str) -> pd.DataFrame:
+    """Shared execution + safety-limit enforcement for already-validated
+    SQL, used by both run_query and generate_sql_from_question."""
     try:
         result = await asyncio.wait_for(
             asyncio.to_thread(_execute_duckdb, df, sql), timeout=QUERY_TIMEOUT_SECONDS
@@ -201,6 +247,28 @@ def _to_parquet_bytes(df: pd.DataFrame) -> bytes:
     buf = io.BytesIO()
     df.to_parquet(buf, index=False)
     return buf.getvalue()
+
+
+_SQL_FENCE_RE = re.compile(r"^```(?:sql)?\s*|\s*```$", re.IGNORECASE)
+
+
+def _build_nl_to_sql_prompt(df: pd.DataFrame, question: str) -> str:
+    columns = "\n".join(f"- {c} ({df[c].dtype})" for c in df.columns)
+    return (
+        "You translate natural-language questions into a single DuckDB SQL query.\n"
+        f"The table is named 'df' with these columns:\n{columns}\n\n"
+        f'Question: "{question}"\n\n'
+        "Output ONLY the SQL query — no explanation, no markdown code fences, "
+        "no semicolon at the end. Use only SELECT or WITH...SELECT. "
+        "Reference only the columns listed above."
+    )
+
+
+def _extract_sql(text: str) -> str:
+    """Strip ```sql ... ``` / ``` ... ``` fences the model may add despite
+    being told not to — a common enough LLM habit to handle explicitly
+    rather than let it silently fail validation."""
+    return _SQL_FENCE_RE.sub("", text.strip()).strip()
 
 
 def _validate_single_select(sql: str) -> None:

@@ -50,6 +50,8 @@ from backend.schemas.analysis import (
     ExpertiseLevel,
     IngestionResult,
     KnowledgeSource,
+    NLQueryRequest,
+    NLQueryResult,
     QueryRequest,
     RecommendationMode,
     SampleDataset,
@@ -548,3 +550,33 @@ async def save_dataset_query(
     except transform_service.QueryValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return await _build_detail(new_dataset, report=[f"Saved query result: {row_count} row(s)."])
+
+
+@router.post(
+    "/datasets/{dataset_id}/query/nl",
+    response_model=NLQueryResult,
+    status_code=status.HTTP_200_OK,
+    summary="Translate a plain-English question into SQL and run it (preview only, not persisted)",
+)
+async def nl_query_dataset(
+    dataset_id: str,
+    request: NLQueryRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> NLQueryResult:
+    """The LLM only ever produces SQL text — that text goes through the
+    exact same validation/sandboxed execution as a hand-typed query in
+    /query above, so this introduces no new trust boundary. Never persists;
+    the returned `sql` can be POSTed to /query/save unchanged to keep it."""
+    try:
+        sql, result_df = await transform_service.generate_sql_from_question(
+            db, current_user.id, dataset_id, request.question
+        )
+    except transform_service.TransformNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except transform_service.QueryValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return NLQueryResult(
+        sql=sql,
+        preview=DatasetPreview(**transform_service.build_preview(result_df, 0, len(result_df))),
+    )

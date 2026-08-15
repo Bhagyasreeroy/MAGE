@@ -316,3 +316,19 @@ class QueryRequest(BaseModel):
     """Body for POST /analysis/datasets/{id}/query and .../query/save."""
 
     sql: str = Field(..., min_length=1, max_length=10000)
+
+
+class NLQueryRequest(BaseModel):
+    """Body for POST /analysis/datasets/{id}/query/nl — a plain-English
+    question, translated to SQL by Gemini before running through the same
+    validated/sandboxed path as hand-typed SQL."""
+
+    question: str = Field(..., min_length=1, max_length=2000)
+
+
+class NLQueryResult(BaseModel):
+    """Response for the ask-in-English endpoint — the translated SQL is
+    always returned alongside the results, so it's never a black box."""
+
+    sql: str = Field(..., description="The SQL Gemini generated from the question.")
+    preview: DatasetPreview
