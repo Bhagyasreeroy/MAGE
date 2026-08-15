@@ -9,7 +9,6 @@ import {
 } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  clearTokens,
   fetchCurrentUser,
   getAccessToken,
   logout as clearSession,
@@ -62,6 +61,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     consumeOAuthTokenFromUrl();
 
     if (!getAccessToken()) {
+      // Clear any stale mage_token cookie too, otherwise the middleware
+      // bounces /signin back to /dashboard and we loop forever.
+      clearSession();
       router.replace('/signin');
       return;
     }
@@ -77,7 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // the cookie's presence, not its validity) bounces /signin straight
         // back to /dashboard, which fetches the user again and loops.
         if (!cancelled) {
-          clearTokens();
+          clearSession();
           router.replace('/signin');
         }
       })

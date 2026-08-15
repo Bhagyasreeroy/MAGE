@@ -41,6 +41,32 @@ def _get_model():
     return _model
 
 
+def warm_up() -> bool:
+    """
+    Load the model now instead of on first use.
+
+    The lazy load costs roughly ten seconds. Left to happen on demand, that
+    cost lands on whichever request needs an embedding first after a restart —
+    which, in the live analysis stream, shows up as a long stall part-way
+    through a run. Calling this at application startup moves it to boot time,
+    where nothing is waiting on it.
+
+    Blocking, so callers on an event loop should hand it to a worker thread.
+
+    Returns
+    -------
+    bool
+        True if the model is loaded and ready; False if loading failed, in
+        which case the normal lazy path will simply try again on first use.
+    """
+    try:
+        _get_model()
+    except Exception:  # noqa: BLE001 - warm-up is an optimisation, never fatal
+        logger.warning("Embedding model warm-up failed; will load on first use.", exc_info=True)
+        return False
+    return True
+
+
 def embed_text(text: str) -> np.ndarray:
     """
     Convert a text string into a dense embedding vector.

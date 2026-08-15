@@ -161,9 +161,11 @@ export default function SettingsPage() {
                 onChange={(e) => setDefaultExpertise(e.target.value as ExpertiseLevel)}
                 className="w-full bg-cream/50 border border-dusty-rose/20 rounded-2xl px-5 py-4 text-navy text-sm focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all appearance-none cursor-pointer"
               >
+                {/* Labels match the spec's three audiences; the stored values
+                    remain the API enum. Keep in sync with the analysis form. */}
                 <option value="beginner">Beginner</option>
-                <option value="intermediate">Intermediate</option>
-                <option value="expert">Expert</option>
+                <option value="intermediate">Analyst</option>
+                <option value="expert">Data Scientist</option>
               </select>
               <p className="text-xs text-navy/40 mt-2 font-light">
                 Pre-selected whenever you start a new analysis.

@@ -404,6 +404,41 @@ export async function explainFinding(
   });
 }
 
+// ── Ingestion + live streaming ──────────────────────────────────────────────
+
+export interface IngestionResult {
+  dataset_id: string;
+  row_count: number;
+  column_count: number;
+  warnings: string[];
+}
+
+/**
+ * Upload and persist a dataset, returning its id.
+ *
+ * The streaming pipeline references datasets by id rather than carrying file
+ * bytes over the WebSocket, so this runs first and its `dataset_id` is what
+ * gets sent on the socket.
+ */
+export async function ingestDataset(file: File): Promise<IngestionResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  return authFetchFormData<IngestionResult>('/analysis/ingest', formData);
+}
+
+/**
+ * Build the WebSocket URL for the live analysis stream.
+ *
+ * The token travels as a query parameter because the browser WebSocket API
+ * cannot set an Authorization header. The backend validates it exactly as it
+ * validates the header on the REST routes.
+ */
+export function buildStreamUrl(): string {
+  const base = API_BASE.replace(/^http/, 'ws');
+  const token = getAccessToken() ?? '';
+  return `${base}/analysis/stream?token=${encodeURIComponent(token)}`;
+}
+
 // ── File downloads (binary responses, not JSON) ─────────────────────────────
 
 /**

@@ -58,10 +58,13 @@ class TestRecommendationAgent:
         result = agent.run(context={"goal": "How do I detect outliers in a numeric column?"})
         rec = result["recommendations"][0]
 
-        assert set(rec.keys()) == {"insight", "text_technical", "text_plain", "confidence", "sources"}
+        assert set(rec.keys()) == {
+            "insight", "text_technical", "text_analyst", "text_plain", "confidence", "sources",
+        }
         assert isinstance(rec["confidence"], float)
         assert 0.0 <= rec["confidence"] <= 1.0
         assert rec["text_plain"] != ""
+        assert rec["text_analyst"] != ""
         assert rec["text_technical"] != ""
 
     def test_plain_text_is_shorter_and_markdown_free(self, agent: RecommendationAgent) -> None:
@@ -112,7 +115,9 @@ class TestQAShortCircuit:
         assert rec["insight"] == "Computed from your data"
         assert rec["confidence"] == 1.0
         assert "units" in rec["text_technical"]
-        assert rec["text_technical"] == rec["text_plain"]
+        # A computed answer is one number — all three registers are identical
+        # here by design; there is no methodology excerpt to expand or compress.
+        assert rec["text_technical"] == rec["text_plain"] == rec["text_analyst"]
 
     def test_broad_goal_falls_through_to_rag(self, agent: RecommendationAgent) -> None:
         context = {

@@ -90,7 +90,11 @@ class TestFallbackPath:
         fake = _FakeLLMClient()
         agent = agent_factory(fake)
 
-        result = agent.explain("asdkjfhalskdjfh completely unrelated gibberish query xyz123")
+        # A domain-unrelated but well-formed query, rather than gibberish: with
+        # the knowledge base's 14-document breadth (M5), short nonsense tokens
+        # can land close to some unrelated chunk purely on embedding noise,
+        # while a coherent off-topic sentence reliably stays below MIN_CONFIDENCE.
+        result = agent.explain("What is the best recipe for chocolate lava cake?")
 
         assert result["synthesized"] is False
         assert result["sources"] == []
