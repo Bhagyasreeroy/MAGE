@@ -27,6 +27,19 @@ class ExpertiseLevel(str, Enum):
     expert = "expert"
 
 
+class RecommendationMode(str, Enum):
+    """How RecommendationAgent produces its response.
+
+    "rag" (default) is the original, grounded/cited path — deterministic,
+    every claim traces to a knowledge-base source. "llm" opts into a
+    freeform Gemini response reasoning over the same computed features,
+    with no citations (see agents/recommendation_agent.py).
+    """
+
+    rag = "rag"
+    llm = "llm"
+
+
 class TaskType(str, Enum):
     """
     Analytical task type inferred from the user's natural-language goal.
@@ -108,6 +121,10 @@ class AnalysisRequest(BaseModel):
         default_factory=dict,
         description="Arbitrary key-value metadata forwarded to the pipeline.",
     )
+    mode: RecommendationMode = Field(
+        default=RecommendationMode.rag,
+        description="'rag' (grounded/cited, default) or 'llm' (freeform Gemini response).",
+    )
 
 
 class StepResult(BaseModel):
@@ -185,6 +202,10 @@ class AnalysisResponse(BaseModel):
 
     goal: str = Field(..., description="Echo of the original analytical goal.")
     expertise_level: ExpertiseLevel
+    mode: RecommendationMode = Field(
+        default=RecommendationMode.rag,
+        description="Which path produced these recommendations — 'rag' or 'llm'.",
+    )
     task_type: TaskType | None = Field(
         default=None,
         description="Task type inferred from the goal, driving the conditional pipeline.",

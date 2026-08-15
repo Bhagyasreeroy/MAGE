@@ -66,6 +66,7 @@ class OrchestratorAgent:
         goal: str,
         expertise_level: str = "intermediate",
         data: dict[str, Any] | None = None,
+        mode: str = "rag",
     ) -> dict[str, Any]:
         """
         Execute the goal-conditioned, ReAct-style EDA pipeline.
@@ -78,6 +79,9 @@ class OrchestratorAgent:
             One of "beginner", "intermediate", "expert".
         data : dict, optional
             Data payload forwarded to agents (e.g. ``{"source": <file>}``).
+        mode : str
+            "rag" (default, grounded/cited) or "llm" (freeform Gemini
+            response) — read by RecommendationAgent only.
 
         Returns
         -------
@@ -85,12 +89,13 @@ class OrchestratorAgent:
             Aggregated result: task_type, classification, ReAct step log,
             recommendations, rag_sources, and a summary.
         """
-        logger.info("OrchestratorAgent.run() | goal=%r expertise=%s", goal, expertise_level)
+        logger.info("OrchestratorAgent.run() | goal=%r expertise=%s mode=%s", goal, expertise_level, mode)
 
         context: dict[str, Any] = {
             "goal": goal,
             "expertise_level": expertise_level,
             "data": data or {},
+            "mode": mode,
         }
 
         # 1. Classify the goal → task type. (Rules work on the goal text alone;
@@ -161,7 +166,7 @@ class OrchestratorAgent:
                     if not classification.target_column:
                         classification.target_column = detected
 
-        return self._aggregate(goal, expertise_level, classification, steps, context)
+        return self._aggregate(goal, expertise_level, mode, classification, steps, context)
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
@@ -200,6 +205,7 @@ class OrchestratorAgent:
         self,
         goal: str,
         expertise_level: str,
+        mode: str,
         classification: GoalClassification,
         steps: list[dict[str, Any]],
         context: dict[str, Any],
@@ -217,6 +223,7 @@ class OrchestratorAgent:
         return {
             "goal": goal,
             "expertise_level": expertise_level,
+            "mode": mode,
             "task_type": classification.task_type.value,
             "classification": classification.model_dump(),
             "steps": steps,

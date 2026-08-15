@@ -9,8 +9,29 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from agents.llm_client import LLMError
 from agents.recommendation_agent import RecommendationAgent
 from rag.vector_store import VectorStore
+
+
+class _FakeLLMClient:
+    """Duck-types GeminiClient for tests — no network, no API key."""
+
+    def __init__(self, configured: bool = True, response: str = "This is the LLM's answer.", error: Exception | None = None) -> None:
+        self._configured = configured
+        self._response = response
+        self._error = error
+        self.last_prompt: str | None = None
+
+    @property
+    def is_configured(self) -> bool:
+        return self._configured
+
+    def generate(self, prompt: str, timeout: float = 20.0) -> str:
+        self.last_prompt = prompt
+        if self._error is not None:
+            raise self._error
+        return self._response
 
 
 @pytest.fixture
@@ -128,3 +149,89 @@ class TestFindingLedRecommendations:
             # markers) indicates an un-trimmed overlap fragment.
             body = rec["text_technical"].lstrip("*#> \n")
             assert not body[:1].islower(), f"starts mid-sentence: {body[:60]!r}"
+
+
+class TestLLMMode:
+    """mode='llm' bypasses QAAgent and RAG entirely — no retrieval, no
+    vector store touched, straight to the injected LLM client."""
+
+    def test_llm_mode_returns_generated_text_in_both_registers(self, tmp_path) -> None:
+        vector_store = VectorStore(backend="faiss", persist_path=str(tmp_path / "vs"))
+        fake = _FakeLLMClient(response="Revenue and units are strongly correlated.")
+        agent = RecommendationAgent(vector_store=vector_store, llm_client=fake)
+
+        result = agent.run(context={"goal": "What drives revenue?", "mode": "llm"})
+
+        assert len(result["recommendations"]) == 1
+        rec = result["recommendations"][0]
+        assert rec["text_technical"] == "Revenue and units are strongly correlated."
+        assert rec["text_plain"] == rec["text_technical"]
+        assert rec["sources"] == []
+        assert result["rag_sources"] == []
+
+    def test_llm_mode_does_not_touch_vector_store(self, tmp_path) -> None:
+        # No KB seeding should happen — vector_store.retrieve would fail
+        # loudly if _ensure_kb_loaded() ran, since we never call initialize().
+        vector_store = VectorStore(backend="faiss", persist_path=str(tmp_path / "vs"))
+        fake = _FakeLLMClient()
+        agent = RecommendationAgent(vector_store=vector_store, llm_client=fake)
+
+        agent.run(context={"goal": "Anything interesting here?", "mode": "llm"})
+        assert fake.last_prompt is not None  # the LLM path actually ran
+
+    def test_llm_mode_includes_mining_features_in_prompt(self, tmp_path) -> None:
+        vector_store = VectorStore(backend="faiss", persist_path=str(tmp_path / "vs"))
+        fake = _FakeLLMClient()
+        agent = RecommendationAgent(vector_store=vector_store, llm_client=fake)
+
+        context = {
+            "goal": "What should I clean up first?",
+            "mode": "llm",
+            "MiningAgent_output": {
+                "statistics": {"revenue": {"type": "numeric", "mean": 100.0, "min": 0.0, "max": 500.0}},
+                "data_quality": {"revenue": {"completeness_pct": 80.0}},
+                "patterns": ["3 outlier(s) detected in 'revenue' via IQR."],
+            },
+            "IngestionAgent_output": {"warnings": ["Column 'id' is constant."]},
+        }
+        agent.run(context=context)
+
+        assert "revenue" in fake.last_prompt
+        assert "20.0% missing" in fake.last_prompt
+        assert "outlier(s) detected in 'revenue'" in fake.last_prompt
+        assert "Column 'id' is constant." in fake.last_prompt
+        assert "What should I clean up first?" in fake.last_prompt
+
+    def test_llm_mode_unconfigured_client_returns_graceful_message(self, tmp_path) -> None:
+        vector_store = VectorStore(backend="faiss", persist_path=str(tmp_path / "vs"))
+        fake = _FakeLLMClient(configured=False)
+        agent = RecommendationAgent(vector_store=vector_store, llm_client=fake)
+
+        result = agent.run(context={"goal": "Anything interesting?", "mode": "llm"})
+
+        assert len(result["recommendations"]) == 1
+        assert "API key" in result["recommendations"][0]["text_technical"]
+        assert result["recommendations"][0]["confidence"] == 0.0
+
+    def test_llm_mode_failed_request_returns_graceful_message_not_raise(self, tmp_path) -> None:
+        vector_store = VectorStore(backend="faiss", persist_path=str(tmp_path / "vs"))
+        fake = _FakeLLMClient(error=LLMError("Gemini returned HTTP 429"))
+        agent = RecommendationAgent(vector_store=vector_store, llm_client=fake)
+
+        result = agent.run(context={"goal": "Anything interesting?", "mode": "llm"})
+
+        assert len(result["recommendations"]) == 1
+        assert "failed" in result["recommendations"][0]["text_technical"].lower()
+
+    def test_default_mode_is_unaffected_by_llm_client_presence(self, tmp_path) -> None:
+        # Regression guard: injecting an llm_client must not change RAG-mode
+        # (or mode-absent) behavior at all.
+        vector_store = VectorStore(backend="faiss", persist_path=str(tmp_path / "vs"))
+        fake = _FakeLLMClient()
+        agent = RecommendationAgent(vector_store=vector_store, llm_client=fake)
+
+        result = agent.run(context={"goal": "How should I handle missing values in my dataset?"})
+
+        assert fake.last_prompt is None  # LLM never called
+        assert len(result["recommendations"]) > 0
+        assert any("missing_values" in source for source in result["rag_sources"])
