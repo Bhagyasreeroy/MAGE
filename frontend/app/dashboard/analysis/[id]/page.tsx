@@ -36,6 +36,7 @@ interface AnalysisResult {
   summary: string;
   dataset_id?: string | null;
   run_id?: string | null;
+  mode?: string;
 }
 
 interface DataQualityRow {
@@ -115,6 +116,7 @@ interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  mode?: 'rag' | 'llm';
 }
 
 export default function AnalysisResultPage() {
@@ -123,6 +125,7 @@ export default function AnalysisResultPage() {
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const [chatMode, setChatMode] = useState<'rag' | 'llm'>('rag');
   const [exportingKey, setExportingKey] = useState<'pdf' | 'json' | 'citations' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
 
@@ -177,6 +180,7 @@ export default function AnalysisResultPage() {
       const formData = new FormData();
       formData.append('goal', goal);
       formData.append('expertise_level', result.expertise_level);
+      formData.append('mode', chatMode);
       if (result.dataset_id) {
         // Re-references the same uploaded dataset server-side — no
         // re-upload needed, and the full pipeline (real stats + RAG)
@@ -192,9 +196,14 @@ export default function AnalysisResultPage() {
       const reply =
         data.recommendations.length > 0
           ? data.recommendations.join('\n\n')
+          : chatMode === 'llm'
+          ? "The LLM didn't return a usable response — try rephrasing."
           : "I couldn't ground a recommendation for that — try rephrasing.";
 
-      setChatHistory((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: reply }]);
+      setChatHistory((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: 'assistant', content: reply, mode: (data.mode as 'rag' | 'llm') ?? chatMode },
+      ]);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Something went wrong';
       setChatHistory((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `Error: ${message}` }]);
@@ -513,6 +522,11 @@ export default function AnalysisResultPage() {
                 <div className="flex items-center gap-2 mb-3 text-navy-muted">
                   <SparkleIcon />
                   <span className="text-xs font-bold uppercase tracking-widest">MAGE</span>
+                  {msg.mode === 'llm' && (
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-peach bg-peach/10 px-2 py-0.5 rounded-full">
+                      via Gemini
+                    </span>
+                  )}
                 </div>
               )}
               {msg.role === 'assistant' ? (
@@ -538,6 +552,28 @@ export default function AnalysisResultPage() {
       {/* ── Sticky Chat Input ──────────────────────────────────────── */}
       <div className="fixed bottom-0 left-64 right-0 p-8 bg-gradient-to-t from-cream via-cream to-transparent pointer-events-none z-30">
         <div className="max-w-4xl mx-auto pointer-events-auto">
+          <div className="flex items-center justify-center gap-1 mb-3">
+            <button
+              type="button"
+              onClick={() => setChatMode('rag')}
+              title="Grounded in the knowledge base — deterministic, every claim cites a source."
+              className={`text-xs font-semibold px-4 py-1.5 rounded-full transition-colors ${
+                chatMode === 'rag' ? 'bg-navy text-cream' : 'text-navy/40 hover:text-navy'
+              }`}
+            >
+              Grounded (RAG)
+            </button>
+            <button
+              type="button"
+              onClick={() => setChatMode('llm')}
+              title="Freeform response from Gemini — reasons over the same computed stats, no citations."
+              className={`text-xs font-semibold px-4 py-1.5 rounded-full transition-colors ${
+                chatMode === 'llm' ? 'bg-navy text-cream' : 'text-navy/40 hover:text-navy'
+              }`}
+            >
+              LLM (Gemini)
+            </button>
+          </div>
           <form onSubmit={handleSendMessage} className="relative group">
             <input
               type="text"

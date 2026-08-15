@@ -51,6 +51,7 @@ from backend.schemas.analysis import (
     IngestionResult,
     KnowledgeSource,
     QueryRequest,
+    RecommendationMode,
     SampleDataset,
     TransformRequest,
 )
@@ -95,6 +96,7 @@ _SAMPLE_DATASET_REGISTRY: dict[str, tuple[str, str]] = {
 async def run_analysis(
     goal: str = Form(...),
     expertise_level: ExpertiseLevel = Form(ExpertiseLevel.intermediate),
+    mode: RecommendationMode = Form(RecommendationMode.rag),
     file: UploadFile | None = File(None),
     dataset_id: str | None = Form(None),
     current_user: User = Depends(get_current_user),
@@ -107,12 +109,14 @@ async def run_analysis(
       a dataset file (first request) or a dataset_id from a previous
       response (follow-up requests, to keep querying the same dataset)
       in a single multipart/form-data request.
+    - `mode` selects how RecommendationAgent responds: "rag" (default,
+      grounded/cited) or "llm" (freeform Gemini response, no citations).
     - Delegates to the OrchestratorAgent which runs the ReAct loop.
     - Persists the run to the user's history.
     - Returns structured EDA recommendations grounded in the RAG layer,
       plus dataset_id/run_id to reuse for follow-up calls / history lookups.
     """
-    request = AnalysisRequest(goal=goal, expertise_level=expertise_level)
+    request = AnalysisRequest(goal=goal, expertise_level=expertise_level, mode=mode)
     try:
         result = await _orchestrator_service.run(
             request, db=db, user_id=current_user.id, file=file, dataset_id=dataset_id

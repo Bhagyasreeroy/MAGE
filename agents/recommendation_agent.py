@@ -24,11 +24,13 @@ Recommendation text is produced in two registers:
     - ``text_technical`` : dense, for analysts / data scientists.
     - ``text_plain``     : plain-language paraphrase, for beginners.
 
-Wiring (future milestones):
-    - Replace deterministic paraphrasing with an LLM call (e.g. Gemini)
-      once an LLM provider/API key is configured, for richer synthesis
-      across multiple retrieved chunks rather than a single top chunk
-      per recommendation.
+**LLM mode** (opt-in, ``context["mode"] == "llm"``): bypasses both paths
+above entirely. Instead of retrieval, the dataset's already-computed
+features (MiningAgent's stats/patterns, IngestionAgent's warnings — never
+raw rows) and the user's goal are handed to Gemini for a freeform,
+conversational response. Deliberately not grounded — LLM recommendations
+always carry empty ``sources``, which is what keeps them visually distinct
+from RAG output (no citation chips) rather than something to "fix" later.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ import logging
 import re
 from typing import Any
 
+from agents.llm_client import GeminiClient, LLMError
 from agents.qa_agent import QAAgent
 from rag.knowledge_loader import KnowledgeBaseLoader
 from rag.vector_store import VectorStore
@@ -130,6 +133,7 @@ class RecommendationAgent:
     Input context keys consumed:
         - ``goal``                      : analytical goal
         - ``expertise_level``           : adapts language complexity
+        - ``mode``                      : "rag" (default) | "llm"
         - ``MiningAgent_output``        : statistical profile + patterns
         - ``IngestionAgent_output``     : data-quality warnings / row count
         - ``VisualizationAgent_output`` : selected chart specs
@@ -139,9 +143,15 @@ class RecommendationAgent:
         - ``rag_sources``     : list of unique knowledge-base sources cited
     """
 
-    def __init__(self, vector_store: VectorStore | None = None, qa_agent: QAAgent | None = None) -> None:
+    def __init__(
+        self,
+        vector_store: VectorStore | None = None,
+        qa_agent: QAAgent | None = None,
+        llm_client: GeminiClient | None = None,
+    ) -> None:
         self._vector_store = vector_store or VectorStore()
         self._qa_agent = qa_agent or QAAgent()
+        self._llm_client = llm_client or GeminiClient()
         self._kb_loaded = False
 
     def _ensure_kb_loaded(self) -> None:
@@ -178,9 +188,8 @@ class RecommendationAgent:
         context = context or {}
         goal = context.get("goal", "")
         expertise_level = context.get("expertise_level", "intermediate")
-        logger.info("RecommendationAgent.run() | goal=%r expertise=%s", goal, expertise_level)
-
-        self._ensure_kb_loaded()
+        mode = context.get("mode", "rag")
+        logger.info("RecommendationAgent.run() | goal=%r expertise=%s mode=%s", goal, expertise_level, mode)
 
         mining_output = context.get("MiningAgent_output")
         mining_dict = mining_output if isinstance(mining_output, dict) else (
@@ -190,6 +199,11 @@ class RecommendationAgent:
         ingestion_dict = ingestion_output if isinstance(ingestion_output, dict) else (
             ingestion_output.model_dump() if hasattr(ingestion_output, "model_dump") else {}
         )
+
+        if mode == "llm":
+            return self._llm_recommend(goal, expertise_level, mining_dict, ingestion_dict)
+
+        self._ensure_kb_loaded()
 
         # 1. Direct answer for specific factual questions — no RAG dump.
         qa_answer = self._qa_agent.try_answer(goal, mining_dict, ingestion_dict)
@@ -273,3 +287,113 @@ class RecommendationAgent:
             "rag_sources": rag_sources,
             "message": f"Generated {len(recommendations)} RAG-grounded recommendation(s).",
         }
+
+    # ── LLM mode ─────────────────────────────────────────────────────────
+
+    def _llm_recommend(
+        self,
+        goal: str,
+        expertise_level: str,
+        mining_dict: dict[str, Any],
+        ingestion_dict: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Freeform response from Gemini, grounded only in already-computed
+        aggregate stats (never raw rows). Never raises — a missing key or a
+        failed request degrades to a single explanatory recommendation
+        instead of breaking the whole pipeline step."""
+        if not self._llm_client.is_configured:
+            text = (
+                "LLM mode isn't set up yet — it needs a Gemini API key configured "
+                "on the server (GEMINI_API_KEY). Switch back to RAG mode for now."
+            )
+            return {
+                "recommendations": [
+                    {
+                        "insight": "LLM mode unavailable",
+                        "text_technical": text,
+                        "text_plain": text,
+                        "confidence": 0.0,
+                        "sources": [],
+                    }
+                ],
+                "rag_sources": [],
+                "message": "LLM mode not configured.",
+            }
+
+        prompt = self._build_llm_prompt(goal, expertise_level, mining_dict, ingestion_dict)
+        try:
+            text = self._llm_client.generate(prompt)
+        except LLMError as exc:
+            logger.warning("LLM recommendation failed: %s", exc)
+            text = f"The LLM request failed ({exc}). Try again, or switch to RAG mode."
+
+        return {
+            "recommendations": [
+                {
+                    "insight": "LLM-generated response",
+                    "text_technical": text,
+                    "text_plain": text,
+                    "confidence": 1.0,
+                    "sources": [],
+                }
+            ],
+            "rag_sources": [],
+            "message": "Generated via Gemini (not grounded in the knowledge base).",
+        }
+
+    def _build_llm_prompt(
+        self,
+        goal: str,
+        expertise_level: str,
+        mining_dict: dict[str, Any],
+        ingestion_dict: dict[str, Any],
+    ) -> str:
+        """Compose a prompt from already-computed aggregate statistics —
+        never raw rows, since this leaves the server as part of the LLM
+        call."""
+        statistics = mining_dict.get("statistics") or {}
+        data_quality = mining_dict.get("data_quality") or {}
+        patterns = mining_dict.get("patterns") or []
+        correlations = mining_dict.get("correlations") or {}
+        warnings = ingestion_dict.get("warnings") or []
+
+        column_lines = []
+        for name, stat in statistics.items():
+            dq = data_quality.get(name, {})
+            missing_pct = round(100 - dq.get("completeness_pct", 100), 1)
+            if stat.get("type") == "numeric":
+                column_lines.append(
+                    f"- {name} (numeric): mean={stat.get('mean')}, min={stat.get('min')}, "
+                    f"max={stat.get('max')}, {missing_pct}% missing"
+                )
+            else:
+                column_lines.append(f"- {name} (categorical): {missing_pct}% missing")
+
+        top_correlations = []
+        seen_pairs: set[frozenset[str]] = set()
+        for col_a, row in correlations.items():
+            for col_b, r in row.items():
+                if col_a == col_b or r is None:
+                    continue
+                pair = frozenset((col_a, col_b))
+                if pair in seen_pairs or abs(r) < 0.5:
+                    continue
+                seen_pairs.add(pair)
+                top_correlations.append(f"- {col_a} vs {col_b}: r={r:.2f}")
+
+        sections = [
+            "You are a data analysis assistant helping a user explore a dataset they've uploaded.",
+            f"\nColumns:\n" + ("\n".join(column_lines) or "(no column profile available)"),
+        ]
+        if patterns:
+            sections.append("\nNotable patterns already detected:\n" + "\n".join(f"- {p}" for p in patterns))
+        if top_correlations:
+            sections.append("\nStrong correlations (|r| >= 0.5):\n" + "\n".join(top_correlations))
+        if warnings:
+            sections.append("\nData quality warnings:\n" + "\n".join(f"- {w}" for w in warnings))
+        sections.append(
+            f'\nUser\'s question: "{goal}"\n\n'
+            f"Answer conversationally, referencing the specific numbers above where relevant. "
+            f"Calibrate depth for a {expertise_level} audience. Keep it under ~200 words."
+        )
+        return "\n".join(sections)
