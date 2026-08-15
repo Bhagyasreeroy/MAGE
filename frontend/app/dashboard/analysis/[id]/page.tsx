@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { authFetchFormData, downloadAuthenticatedFile, fetchAnalysisRun } from '../../../lib/api';
+import { authFetchFormData, downloadAuthenticatedFile, explainFinding, fetchAnalysisRun } from '../../../lib/api';
 import { BarChart, BoxPlot, ClusterScatter, CorrelationHeatmap, Histogram, ScatterPlot } from '../../../components/charts';
 import { Markdown } from '../../../components/markdown';
 
@@ -86,6 +86,84 @@ const DocumentIcon = () => (
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
   </svg>
 );
+
+/**
+ * A small "Explain further" affordance for a specific, already-computed
+ * finding (a recommendation's own text, a feature-importance result).
+ * Always grounded — POST /analysis/explain retrieves from the knowledge
+ * base first and only optionally has the LLM synthesize on top, so the
+ * result always carries at least one citation (or an honest "nothing
+ * found" message), never free-floating LLM text.
+ */
+function ExplainButton({ finding, goal }: { finding: string; goal: string }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [result, setResult] = useState<{ explanation: string; sources: string[]; synthesized: boolean } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleClick() {
+    if (isOpen) {
+      setIsOpen(false);
+      return;
+    }
+    setIsOpen(true);
+    if (result || isLoading) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await explainFinding(finding, goal);
+      setResult(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load an explanation');
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  return (
+    <div className="mt-2">
+      <button
+        onClick={handleClick}
+        className="text-[11px] font-semibold text-peach hover:text-navy transition-colors flex items-center gap-1"
+      >
+        <SparkleIcon />
+        {isOpen ? 'Hide explanation' : 'Explain further'}
+      </button>
+      {isOpen && (
+        <div className="mt-2 bg-cream/60 border border-dusty-rose/15 rounded-xl p-4">
+          {isLoading && <p className="text-xs text-navy/40">Thinking…</p>}
+          {error && <p className="text-xs text-dusty-rose">{error}</p>}
+          {result && (
+            <>
+              <div className="flex items-center gap-2 mb-2">
+                <span
+                  className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${
+                    result.synthesized ? 'text-peach bg-peach/10' : 'text-navy/40 bg-cream-dark/60'
+                  }`}
+                >
+                  {result.synthesized ? 'Synthesized by Gemini' : 'From the knowledge base'}
+                </span>
+              </div>
+              <Markdown text={result.explanation} className="text-xs text-navy/70 leading-relaxed mb-2" />
+              {result.sources.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {result.sources.map((src, i) => (
+                    <span
+                      key={i}
+                      className="bg-cream-dark/60 border border-dusty-rose/20 rounded-lg px-2 py-1 text-[10px] text-navy/50 flex items-center gap-1"
+                    >
+                      <DocumentIcon /> {src}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const SendIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -377,6 +455,17 @@ export default function AnalysisResultPage() {
                     {(spec.type === 'bar' || spec.type === 'feature_importance' || spec.type === 'missingness_matrix') && (
                       <BarChart items={spec.items as { label: string; value: number }[]} />
                     )}
+                    {spec.type === 'feature_importance' && (() => {
+                      const items = spec.items as { label: string; value: number }[];
+                      const top = items[0];
+                      if (!top) return null;
+                      return (
+                        <ExplainButton
+                          finding={`'${top.label}' has the highest feature importance (PCA loading ${top.value}).`}
+                          goal={result.goal}
+                        />
+                      );
+                    })()}
                     {spec.type === 'scatter' && (
                       <ScatterPlot
                         points={spec.points as { x: number; y: number }[]}
@@ -418,7 +507,10 @@ export default function AnalysisResultPage() {
               {result.recommendations.map((rec, idx) => (
                 <li key={idx} className="flex gap-3 text-navy/70 font-light">
                   <span className="text-navy-muted bg-cream-dark w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">{idx + 1}</span>
-                  <Markdown text={rec} className="flex-1 min-w-0 text-sm" />
+                  <div className="flex-1 min-w-0">
+                    <Markdown text={rec} className="text-sm" />
+                    <ExplainButton finding={rec} goal={result.goal} />
+                  </div>
                 </li>
               ))}
             </ul>
