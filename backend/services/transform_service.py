@@ -22,6 +22,7 @@ import io
 import logging
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -149,6 +150,44 @@ async def save_query_result(
         dataset.id, new_dataset.id, new_dataset.version,
     )
     return new_dataset, len(result_df)
+
+
+def build_preview(df: pd.DataFrame, offset: int = 0, limit: int = 50) -> dict[str, Any]:
+    """A JSON-safe page of rows — backs both the spreadsheet grid and the
+    query console's result table. Handles NaN/NaT/numpy scalar types,
+    none of which are directly JSON-serializable."""
+    total_rows = len(df)
+    page = df.iloc[offset : offset + limit]
+    columns = [str(c) for c in page.columns]
+    dtypes = [str(dt) for dt in page.dtypes]
+    rows = [[_json_safe(v) for v in row] for row in page.itertuples(index=False, name=None)]
+    return {
+        "columns": columns,
+        "dtypes": dtypes,
+        "rows": rows,
+        "total_rows": total_rows,
+        "offset": offset,
+        "limit": limit,
+    }
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, pd.Timestamp):
+        return None if pd.isna(value) else value.isoformat()
+    if isinstance(value, pd.Timedelta):
+        return str(value)
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        as_float = float(value)
+        return None if pd.isna(as_float) else as_float
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, float) and pd.isna(value):
+        return None
+    return value
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────

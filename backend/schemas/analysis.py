@@ -243,3 +243,55 @@ class DatasetSummary(BaseModel):
     row_count: int | None
     column_count: int | None
     created_at: datetime
+    root_id: str = Field(default="", description="Lineage root id — shared by every version of this dataset.")
+    parent_id: str | None = Field(default=None, description="The version this one was transformed from, if any.")
+    version: int = Field(default=1, description="1 for an original upload; increments per transform.")
+    transform_type: str | None = Field(
+        default=None, description="'clean' | 'query_save' | None (an original upload)."
+    )
+
+
+class DatasetDetail(DatasetSummary):
+    """Full detail for a single dataset version — backs the workbench page."""
+
+    column_summary: list[ColumnSummary] = Field(default_factory=list)
+    transform_params: dict[str, Any] | None = Field(
+        default=None, description="{'ops': [...]} for 'clean', {'sql': '...'} for 'query_save'."
+    )
+    report: list[str] | None = Field(
+        default=None,
+        description="Human-readable summary of what changed — only present on a freshly-created version.",
+    )
+
+
+class DatasetPreview(BaseModel):
+    """A page of rows from a dataset — backs the spreadsheet grid and the
+    query console's result table."""
+
+    columns: list[str] = Field(..., description="Column names, in order.")
+    dtypes: list[str] = Field(..., description="Pandas dtype string per column, same order as columns.")
+    rows: list[list[Any]] = Field(..., description="Row values, each inner list ordered like columns.")
+    total_rows: int = Field(..., description="Total row count of the full dataset (not just this page).")
+    offset: int = Field(default=0)
+    limit: int = Field(default=50)
+
+
+class TransformOpRequest(BaseModel):
+    """One staged operation — see data_pipeline/processing.py for the
+    supported 'type' values and their params."""
+
+    model_config = {"extra": "allow"}
+
+    type: str = Field(..., description="Op type, e.g. 'drop_columns', 'fill_missing', 'edit_cells'.")
+
+
+class TransformRequest(BaseModel):
+    """Body for POST /analysis/datasets/{id}/transform."""
+
+    ops: list[TransformOpRequest] = Field(..., min_length=1)
+
+
+class QueryRequest(BaseModel):
+    """Body for POST /analysis/datasets/{id}/query and .../query/save."""
+
+    sql: str = Field(..., min_length=1, max_length=10000)
