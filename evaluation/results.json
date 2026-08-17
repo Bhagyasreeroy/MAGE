@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-12T05:47:49.188850+00:00",
+  "generated_at": "2026-08-17T16:37:10.052917+00:00",
   "environment": {
     "python": "3.13.7",
     "platform": "macOS-26.2-arm64-arm-64bit-Mach-O",
@@ -28,7 +28,7 @@
     "successful_runs": 25,
     "mage_computation_divergence": 0.94,
     "baseline_computation_divergence": 0.0,
-    "mage_chart_divergence": 0.9424,
+    "mage_chart_divergence": 0.979,
     "mean_precision": 1.0,
     "mean_recall": 0.601,
     "mean_baseline_precision": 0.4,
@@ -37,8 +37,8 @@
     "mean_baseline_f1": 0.458,
     "mean_citation_coverage": 1.0,
     "goal_classification_accuracy": 1.0,
-    "max_runtime_seconds": 1.686,
-    "mean_runtime_seconds": 0.348,
+    "max_runtime_seconds": 1.561,
+    "mean_runtime_seconds": 0.273,
     "fr05_under_60s": true
   },
   "per_dataset": [
@@ -54,7 +54,7 @@
       "column_count": 8,
       "mage_computation_divergence": 0.94,
       "baseline_computation_divergence": 0.0,
-      "mage_chart_divergence": 0.9467,
+      "mage_chart_divergence": 0.98,
       "computation_pairs": [
         {
           "a": "anomaly_detection",
@@ -111,7 +111,7 @@
         {
           "a": "anomaly_detection",
           "b": "classification",
-          "distance": 0.6667
+          "distance": 1.0
         },
         {
           "a": "anomaly_detection",
@@ -164,7 +164,7 @@
       "mean_baseline_precision": 0.4,
       "mean_baseline_recall": 0.5391,
       "mean_citation_coverage": 1.0,
-      "max_runtime_seconds": 1.152
+      "max_runtime_seconds": 0.836
     },
     {
       "dataset": "iris",
@@ -176,7 +176,7 @@
       "column_count": 5,
       "mage_computation_divergence": 0.94,
       "baseline_computation_divergence": 0.0,
-      "mage_chart_divergence": 0.9467,
+      "mage_chart_divergence": 0.98,
       "computation_pairs": [
         {
           "a": "anomaly_detection",
@@ -233,7 +233,7 @@
         {
           "a": "anomaly_detection",
           "b": "classification",
-          "distance": 0.6667
+          "distance": 1.0
         },
         {
           "a": "anomaly_detection",
@@ -286,7 +286,7 @@
       "mean_baseline_precision": 0.4,
       "mean_baseline_recall": 0.5391,
       "mean_citation_coverage": 1.0,
-      "max_runtime_seconds": 0.223
+      "max_runtime_seconds": 0.16
     },
     {
       "dataset": "wine",
@@ -298,7 +298,7 @@
       "column_count": 14,
       "mage_computation_divergence": 0.94,
       "baseline_computation_divergence": 0.0,
-      "mage_chart_divergence": 0.9467,
+      "mage_chart_divergence": 0.98,
       "computation_pairs": [
         {
           "a": "anomaly_detection",
@@ -355,7 +355,7 @@
         {
           "a": "anomaly_detection",
           "b": "classification",
-          "distance": 0.6667
+          "distance": 1.0
         },
         {
           "a": "anomaly_detection",
@@ -408,7 +408,7 @@
       "mean_baseline_precision": 0.4,
       "mean_baseline_recall": 0.5391,
       "mean_citation_coverage": 1.0,
-      "max_runtime_seconds": 0.475
+      "max_runtime_seconds": 0.323
     },
     {
       "dataset": "breast_cancer",
@@ -420,7 +420,7 @@
       "column_count": 31,
       "mage_computation_divergence": 0.94,
       "baseline_computation_divergence": 0.0,
-      "mage_chart_divergence": 0.9467,
+      "mage_chart_divergence": 0.98,
       "computation_pairs": [
         {
           "a": "anomaly_detection",
@@ -477,7 +477,7 @@
         {
           "a": "anomaly_detection",
           "b": "classification",
-          "distance": 0.6667
+          "distance": 1.0
         },
         {
           "a": "anomaly_detection",
@@ -530,7 +530,7 @@
       "mean_baseline_precision": 0.4,
       "mean_baseline_recall": 0.5391,
       "mean_citation_coverage": 1.0,
-      "max_runtime_seconds": 1.686
+      "max_runtime_seconds": 1.561
     },
     {
       "dataset": "diabetes",
@@ -542,7 +542,7 @@
       "column_count": 11,
       "mage_computation_divergence": 0.94,
       "baseline_computation_divergence": 0.0,
-      "mage_chart_divergence": 0.925,
+      "mage_chart_divergence": 0.975,
       "computation_pairs": [
         {
           "a": "anomaly_detection",
@@ -599,7 +599,7 @@
         {
           "a": "anomaly_detection",
           "b": "classification",
-          "distance": 0.5
+          "distance": 1.0
         },
         {
           "a": "anomaly_detection",
@@ -652,7 +652,7 @@
       "mean_baseline_precision": 0.4,
       "mean_baseline_recall": 0.5391,
       "mean_citation_coverage": 1.0,
-      "max_runtime_seconds": 0.31
+      "max_runtime_seconds": 0.247
     }
   ],
   "runs": [
@@ -668,9 +668,9 @@
         "shap_attribution"
       ],
       "chart_types": [
-        "bar",
-        "boxplot",
-        "feature_importance"
+        "box_by_class",
+        "feature_importance",
+        "grouped_bar"
       ],
       "recommendation_count": 5,
       "cited_source_count": 5,
@@ -678,7 +678,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 1.152,
+      "runtime_seconds": 0.836,
       "row_count": 400,
       "column_count": 8,
       "status": "success",
@@ -719,7 +719,7 @@
       "precision": 1.0,
       "recall": 0.5714,
       "f1": 0.7273,
-      "runtime_seconds": 0.18,
+      "runtime_seconds": 0.122,
       "row_count": 400,
       "column_count": 8,
       "status": "success",
@@ -750,7 +750,8 @@
         "standardize"
       ],
       "chart_types": [
-        "cluster_scatter"
+        "cluster_scatter",
+        "pairplot"
       ],
       "recommendation_count": 5,
       "cited_source_count": 5,
@@ -758,7 +759,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.251,
+      "runtime_seconds": 0.175,
       "row_count": 400,
       "column_count": 8,
       "status": "success",
@@ -788,7 +789,8 @@
         "isolation_forest"
       ],
       "chart_types": [
-        "boxplot"
+        "boxplot",
+        "highlighted_scatter"
       ],
       "recommendation_count": 5,
       "cited_source_count": 5,
@@ -796,7 +798,7 @@
       "precision": 1.0,
       "recall": 0.6,
       "f1": 0.75,
-      "runtime_seconds": 0.224,
+      "runtime_seconds": 0.161,
       "row_count": 400,
       "column_count": 8,
       "status": "success",
@@ -827,7 +829,8 @@
       ],
       "chart_types": [
         "histogram",
-        "missingness_matrix"
+        "missingness_matrix",
+        "violin"
       ],
       "recommendation_count": 5,
       "cited_source_count": 5,
@@ -835,7 +838,7 @@
       "precision": 1.0,
       "recall": 0.5,
       "f1": 0.6667,
-      "runtime_seconds": 0.07,
+      "runtime_seconds": 0.058,
       "row_count": 400,
       "column_count": 8,
       "status": "success",
@@ -867,7 +870,7 @@
       ],
       "chart_types": [
         "bar",
-        "boxplot",
+        "box_by_class",
         "feature_importance"
       ],
       "recommendation_count": 5,
@@ -876,7 +879,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.223,
+      "runtime_seconds": 0.16,
       "row_count": 150,
       "column_count": 5,
       "status": "success",
@@ -917,7 +920,7 @@
       "precision": 1.0,
       "recall": 0.5714,
       "f1": 0.7273,
-      "runtime_seconds": 0.219,
+      "runtime_seconds": 0.156,
       "row_count": 150,
       "column_count": 5,
       "status": "success",
@@ -948,7 +951,8 @@
         "standardize"
       ],
       "chart_types": [
-        "cluster_scatter"
+        "cluster_scatter",
+        "pairplot"
       ],
       "recommendation_count": 4,
       "cited_source_count": 4,
@@ -956,7 +960,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.107,
+      "runtime_seconds": 0.081,
       "row_count": 150,
       "column_count": 5,
       "status": "success",
@@ -986,7 +990,8 @@
         "isolation_forest"
       ],
       "chart_types": [
-        "boxplot"
+        "boxplot",
+        "highlighted_scatter"
       ],
       "recommendation_count": 5,
       "cited_source_count": 5,
@@ -994,7 +999,7 @@
       "precision": 1.0,
       "recall": 0.6,
       "f1": 0.75,
-      "runtime_seconds": 0.169,
+      "runtime_seconds": 0.113,
       "row_count": 150,
       "column_count": 5,
       "status": "success",
@@ -1025,7 +1030,8 @@
       ],
       "chart_types": [
         "histogram",
-        "missingness_matrix"
+        "missingness_matrix",
+        "violin"
       ],
       "recommendation_count": 5,
       "cited_source_count": 5,
@@ -1033,7 +1039,7 @@
       "precision": 1.0,
       "recall": 0.5,
       "f1": 0.6667,
-      "runtime_seconds": 0.025,
+      "runtime_seconds": 0.02,
       "row_count": 150,
       "column_count": 5,
       "status": "success",
@@ -1065,7 +1071,7 @@
       ],
       "chart_types": [
         "bar",
-        "boxplot",
+        "box_by_class",
         "feature_importance"
       ],
       "recommendation_count": 5,
@@ -1074,7 +1080,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.475,
+      "runtime_seconds": 0.323,
       "row_count": 178,
       "column_count": 14,
       "status": "success",
@@ -1115,7 +1121,7 @@
       "precision": 1.0,
       "recall": 0.5714,
       "f1": 0.7273,
-      "runtime_seconds": 0.41,
+      "runtime_seconds": 0.271,
       "row_count": 178,
       "column_count": 14,
       "status": "success",
@@ -1146,7 +1152,8 @@
         "standardize"
       ],
       "chart_types": [
-        "cluster_scatter"
+        "cluster_scatter",
+        "pairplot"
       ],
       "recommendation_count": 5,
       "cited_source_count": 5,
@@ -1154,7 +1161,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.152,
+      "runtime_seconds": 0.123,
       "row_count": 178,
       "column_count": 14,
       "status": "success",
@@ -1184,7 +1191,8 @@
         "isolation_forest"
       ],
       "chart_types": [
-        "boxplot"
+        "boxplot",
+        "highlighted_scatter"
       ],
       "recommendation_count": 5,
       "cited_source_count": 5,
@@ -1192,7 +1200,7 @@
       "precision": 1.0,
       "recall": 0.6,
       "f1": 0.75,
-      "runtime_seconds": 0.304,
+      "runtime_seconds": 0.215,
       "row_count": 178,
       "column_count": 14,
       "status": "success",
@@ -1223,7 +1231,8 @@
       ],
       "chart_types": [
         "histogram",
-        "missingness_matrix"
+        "missingness_matrix",
+        "violin"
       ],
       "recommendation_count": 5,
       "cited_source_count": 5,
@@ -1231,7 +1240,7 @@
       "precision": 1.0,
       "recall": 0.5,
       "f1": 0.6667,
-      "runtime_seconds": 0.064,
+      "runtime_seconds": 0.051,
       "row_count": 178,
       "column_count": 14,
       "status": "success",
@@ -1263,7 +1272,7 @@
       ],
       "chart_types": [
         "bar",
-        "boxplot",
+        "box_by_class",
         "feature_importance"
       ],
       "recommendation_count": 5,
@@ -1272,7 +1281,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.765,
+      "runtime_seconds": 0.571,
       "row_count": 569,
       "column_count": 31,
       "status": "success",
@@ -1313,7 +1322,7 @@
       "precision": 1.0,
       "recall": 0.5714,
       "f1": 0.7273,
-      "runtime_seconds": 1.686,
+      "runtime_seconds": 1.561,
       "row_count": 569,
       "column_count": 31,
       "status": "success",
@@ -1344,7 +1353,8 @@
         "standardize"
       ],
       "chart_types": [
-        "cluster_scatter"
+        "cluster_scatter",
+        "pairplot"
       ],
       "recommendation_count": 5,
       "cited_source_count": 5,
@@ -1352,7 +1362,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.278,
+      "runtime_seconds": 0.214,
       "row_count": 569,
       "column_count": 31,
       "status": "success",
@@ -1382,7 +1392,8 @@
         "isolation_forest"
       ],
       "chart_types": [
-        "boxplot"
+        "boxplot",
+        "highlighted_scatter"
       ],
       "recommendation_count": 5,
       "cited_source_count": 5,
@@ -1390,7 +1401,7 @@
       "precision": 1.0,
       "recall": 0.6,
       "f1": 0.75,
-      "runtime_seconds": 0.885,
+      "runtime_seconds": 0.727,
       "row_count": 569,
       "column_count": 31,
       "status": "success",
@@ -1421,7 +1432,8 @@
       ],
       "chart_types": [
         "histogram",
-        "missingness_matrix"
+        "missingness_matrix",
+        "violin"
       ],
       "recommendation_count": 5,
       "cited_source_count": 5,
@@ -1429,7 +1441,7 @@
       "precision": 1.0,
       "recall": 0.5,
       "f1": 0.6667,
-      "runtime_seconds": 0.161,
+      "runtime_seconds": 0.137,
       "row_count": 569,
       "column_count": 31,
       "status": "success",
@@ -1460,7 +1472,7 @@
         "shap_attribution"
       ],
       "chart_types": [
-        "boxplot",
+        "box_by_class",
         "feature_importance"
       ],
       "recommendation_count": 5,
@@ -1469,7 +1481,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.191,
+      "runtime_seconds": 0.154,
       "row_count": 442,
       "column_count": 11,
       "status": "success",
@@ -1510,7 +1522,7 @@
       "precision": 1.0,
       "recall": 0.5714,
       "f1": 0.7273,
-      "runtime_seconds": 0.204,
+      "runtime_seconds": 0.153,
       "row_count": 442,
       "column_count": 11,
       "status": "success",
@@ -1541,7 +1553,8 @@
         "standardize"
       ],
       "chart_types": [
-        "cluster_scatter"
+        "cluster_scatter",
+        "pairplot"
       ],
       "recommendation_count": 4,
       "cited_source_count": 4,
@@ -1549,7 +1562,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.154,
+      "runtime_seconds": 0.15,
       "row_count": 442,
       "column_count": 11,
       "status": "success",
@@ -1579,7 +1592,8 @@
         "isolation_forest"
       ],
       "chart_types": [
-        "boxplot"
+        "boxplot",
+        "highlighted_scatter"
       ],
       "recommendation_count": 5,
       "cited_source_count": 5,
@@ -1587,7 +1601,7 @@
       "precision": 1.0,
       "recall": 0.6,
       "f1": 0.75,
-      "runtime_seconds": 0.31,
+      "runtime_seconds": 0.247,
       "row_count": 442,
       "column_count": 11,
       "status": "success",
@@ -1618,7 +1632,8 @@
       ],
       "chart_types": [
         "histogram",
-        "missingness_matrix"
+        "missingness_matrix",
+        "violin"
       ],
       "recommendation_count": 5,
       "cited_source_count": 5,
@@ -1626,7 +1641,7 @@
       "precision": 1.0,
       "recall": 0.5,
       "f1": 0.6667,
-      "runtime_seconds": 0.047,
+      "runtime_seconds": 0.034,
       "row_count": 442,
       "column_count": 11,
       "status": "success",

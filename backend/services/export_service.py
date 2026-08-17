@@ -16,7 +16,7 @@ from xml.sax.saxutils import escape
 
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.graphics.charts.lineplots import LinePlot
-from reportlab.graphics.shapes import Drawing
+from reportlab.graphics.shapes import Drawing, Rect, String
 from reportlab.graphics.widgets.markers import makeMarker
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import LETTER
@@ -166,6 +166,53 @@ def _scatter_drawing(groups: list[list[tuple[float, float]]]) -> Drawing:
     return d
 
 
+def _grouped_bar_drawing(categories: list[Any], series: list[dict[str, Any]]) -> Drawing:
+    """A multi-series bar chart — one bar group per category, one colour per
+    series. Each series must supply a value for every category, so short rows
+    are padded with zero rather than silently shifting the bars left."""
+    d = Drawing(460, 190)
+    chart = VerticalBarChart()
+    chart.x, chart.y, chart.width, chart.height = 35, 55, 410, 120
+    width = len(categories)
+    chart.data = [
+        [float(v) for v in (s.get("values") or [])][:width]
+        + [0.0] * max(0, width - len(s.get("values") or []))
+        for s in series
+    ]
+    chart.categoryAxis.categoryNames = [str(c)[:12] for c in categories]
+    chart.categoryAxis.labels.fontSize = 6
+    chart.categoryAxis.labels.angle = 30
+    chart.categoryAxis.labels.dy = -6
+    chart.categoryAxis.labels.boxAnchor = "ne"
+    chart.valueAxis.labels.fontSize = 6
+    chart.valueAxis.valueMin = 0
+    chart.groupSpacing = 6
+    for i in range(len(chart.data)):
+        chart.bars[i].fillColor = _CHART_PALETTE[i % len(_CHART_PALETTE)]
+    d.add(chart)
+
+    # A grouped bar is unreadable without knowing which colour is which class,
+    # and reportlab's Legend is fiddly at this size — so label the series in a
+    # simple swatch row beneath the axis.
+    for i, s in enumerate(series):
+        x = 40 + i * 90
+        d.add(Rect(x, 12, 8, 8, fillColor=_CHART_PALETTE[i % len(_CHART_PALETTE)], strokeColor=None))
+        d.add(String(x + 12, 13, str(s.get("name", ""))[:14], fontSize=7))
+    return d
+
+
+def _line_drawing(points: list[tuple[float, float]]) -> Drawing:
+    """A connected trend line — the one chart type here that keeps its stroke."""
+    d = Drawing(460, 190)
+    plot = LinePlot()
+    plot.x, plot.y, plot.width, plot.height = 40, 30, 400, 140
+    plot.data = [points]
+    plot.lines[0].strokeColor = _CHART_PALETTE[0]
+    plot.lines[0].strokeWidth = 1.2
+    d.add(plot)
+    return d
+
+
 def _heatmap_table(columns: list[str], matrix: list[list[Any]]) -> Table:
     """Correlation matrix as a shaded table (blue = positive, rose = negative)."""
     header = [""] + [str(c)[:8] for c in columns]
@@ -221,7 +268,11 @@ def _chart_flowables(run: AnalysisRun, heading_style: ParagraphStyle, caption_st
             drawing = None
         if drawing is None:
             continue
-        flowables.append(Paragraph(str(spec.get("title", spec.get("type", "Chart"))), caption_style))
+        # Escaped: chart captions quote column names back ("Distribution of
+        # '<revenue>'"), and reportlab parses Paragraph input as mini-XML. This
+        # is the same crash class fixed for the agent trail on 12 Aug — the
+        # caption path was missed then.
+        flowables.append(Paragraph(_esc(spec.get("title", spec.get("type", "Chart"))), caption_style))
         flowables.append(drawing)
         flowables.append(Spacer(1, 10))
         rendered += 1
@@ -271,16 +322,98 @@ def _spec_to_flowable(spec: dict[str, Any]) -> Any | None:
             return None
         rows = [["min", "q1", "median", "q3", "max"],
                 [f"{spec.get(k, '')}" for k in keys]]
-        table = Table(rows, hAlign="LEFT")
-        table.setStyle(TableStyle([
-            ("FONTSIZE", (0, 0), (-1, -1), 8),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#9a8c98")),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#22223b")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ]))
-        return table
+        return _summary_table(rows)
+
+    if ctype == "grouped_bar":
+        series = spec.get("series") or []
+        categories = spec.get("categories") or []
+        if not series or not categories:
+            return None
+        return _grouped_bar_drawing(categories, series)
+
+    if ctype == "box_by_class":
+        # One row per class. A grouped box plot is not worth hand-drawing in
+        # reportlab; the five-number summary per class carries the same
+        # comparison and stays legible at report width.
+        groups = spec.get("groups") or []
+        if not groups:
+            return None
+        rows = [["class", "n", "min", "q1", "median", "q3", "max"]]
+        for g in groups:
+            rows.append([
+                str(g.get("label", ""))[:14],
+                f"{g.get('count', '')}",
+                *(f"{g.get(k, '')}" for k in ("min", "q1", "median", "q3", "max")),
+            ])
+        return _summary_table(rows)
+
+    if ctype == "pairplot":
+        pairs = spec.get("pairs") or []
+        if not pairs:
+            return None
+        # Each panel becomes its own colour series, min-max scaled into a
+        # shared unit square so the panels are comparable when overlaid.
+        # A true panel grid is not available at this width; the caption names
+        # the pairs, and the JSON export keeps the unscaled points.
+        groups: list[list[tuple[float, float]]] = []
+        for pair in pairs:
+            points = pair.get("points") or []
+            if not points:
+                continue
+            xs = [float(p.get("x", 0)) for p in points]
+            ys = [float(p.get("y", 0)) for p in points]
+            x_range = (max(xs) - min(xs)) or 1.0
+            y_range = (max(ys) - min(ys)) or 1.0
+            groups.append([
+                ((x - min(xs)) / x_range, (y - min(ys)) / y_range) for x, y in zip(xs, ys)
+            ])
+        return _scatter_drawing(groups) if groups else None
+
+    if ctype == "highlighted_scatter":
+        points = spec.get("points") or []
+        if not points:
+            return None
+        # Two series so the flagged rows can carry their own colour — the whole
+        # point of the chart. Normal first, highlighted second.
+        normal = [(float(p.get("x", 0)), float(p.get("y", 0))) for p in points if not p.get("outlier")]
+        flagged = [(float(p.get("x", 0)), float(p.get("y", 0))) for p in points if p.get("outlier")]
+        return _scatter_drawing([normal, flagged])
+
+    if ctype == "violin":
+        bands = spec.get("bands") or []
+        if not bands:
+            return None
+        # Drawn as the density profile it is built from. Reportlab has no
+        # violin primitive, and a mirrored band chart hand-built from polygons
+        # would be a worse artefact than an honest density bar chart.
+        return _bar_drawing(
+            [f"{b.get('center', '')}" for b in bands],
+            [float(b.get("count", 0)) for b in bands],
+        )
+
+    if ctype == "line":
+        points = spec.get("points") or []
+        if not points:
+            return None
+        # The x values are ISO timestamps; reportlab's LinePlot needs numbers,
+        # so index by position. The points are already time-ordered, and the
+        # axis label names the date column.
+        return _line_drawing([(float(i), float(p.get("y", 0))) for i, p in enumerate(points)])
 
     return None
+
+
+def _summary_table(rows: list[list[str]]) -> Table:
+    """A compact header-plus-body table, used for the numeric chart types that
+    reportlab cannot draw directly."""
+    table = Table(rows, hAlign="LEFT")
+    table.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#9a8c98")),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#22223b")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+    ]))
+    return table
 
 
 # ── PDF report ────────────────────────────────────────────────────────────

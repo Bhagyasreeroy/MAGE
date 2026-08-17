@@ -4,7 +4,20 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { authFetchFormData, downloadAuthenticatedFile, fetchAnalysisRun } from '../../../lib/api';
-import { BarChart, BoxPlot, ClusterScatter, CorrelationHeatmap, Histogram } from '../../../components/charts';
+import {
+  BarChart,
+  BoxByClass,
+  BoxPlot,
+  ClusterScatter,
+  CorrelationHeatmap,
+  GroupedBar,
+  HighlightedScatter,
+  Histogram,
+  LineChart,
+  Pairplot,
+  ScatterPlot,
+  Violin,
+} from '../../../components/charts';
 import { Markdown } from '../../../components/markdown';
 
 interface StepResult {
@@ -354,7 +367,11 @@ export default function AnalysisResultPage() {
                   // Wide chart types (many columns/labels) get the full row so
                   // they have room to breathe instead of being squeezed into
                   // a half-width column and overflowing it.
-                  const isWide = spec.type === 'correlation_heatmap' || spec.type === 'cluster_scatter';
+                  const isWide =
+                    spec.type === 'correlation_heatmap' ||
+                    spec.type === 'cluster_scatter' ||
+                    spec.type === 'pairplot' ||
+                    spec.type === 'line';
                   return (
                   <div
                     key={idx}
@@ -383,6 +400,73 @@ export default function AnalysisResultPage() {
                     )}
                     {spec.type === 'cluster_scatter' && (
                       <ClusterScatter points={spec.points as { x: number; y: number; cluster: number }[]} />
+                    )}
+                    {/* `scatter` and `missingness_matrix` were emitted by the
+                        agent but had no branch here, so regression and
+                        reporting runs rendered an empty card under a title. */}
+                    {spec.type === 'scatter' && (
+                      <ScatterPlot
+                        points={spec.points as { x: number; y: number }[]}
+                        xLabel={spec.x_label as string | undefined}
+                        yLabel={spec.y_label as string | undefined}
+                      />
+                    )}
+                    {spec.type === 'missingness_matrix' && (
+                      <BarChart items={spec.items as { label: string; value: number }[]} />
+                    )}
+                    {spec.type === 'grouped_bar' && (
+                      <GroupedBar
+                        categories={spec.categories as string[]}
+                        series={spec.series as { name: string; values: number[] }[]}
+                        groupLabel={spec.group_label as string | undefined}
+                      />
+                    )}
+                    {spec.type === 'box_by_class' && (
+                      <BoxByClass
+                        groups={
+                          spec.groups as {
+                            label: string;
+                            count: number;
+                            min: number;
+                            q1: number;
+                            median: number;
+                            q3: number;
+                            max: number;
+                          }[]
+                        }
+                      />
+                    )}
+                    {spec.type === 'pairplot' && (
+                      <Pairplot
+                        pairs={
+                          spec.pairs as {
+                            x_label: string;
+                            y_label: string;
+                            r: number;
+                            points: { x: number; y: number }[];
+                          }[]
+                        }
+                      />
+                    )}
+                    {spec.type === 'highlighted_scatter' && (
+                      <HighlightedScatter
+                        points={spec.points as { x: number; y: number; outlier?: boolean }[]}
+                        xLabel={spec.x_label as string | undefined}
+                        yLabel={spec.y_label as string | undefined}
+                      />
+                    )}
+                    {spec.type === 'violin' && (
+                      <Violin
+                        bands={spec.bands as { center: number; count: number; width: number }[]}
+                        median={spec.median as number | null | undefined}
+                      />
+                    )}
+                    {spec.type === 'line' && (
+                      <LineChart
+                        points={spec.points as { x: string; y: number }[]}
+                        xLabel={spec.x_label as string | undefined}
+                        yLabel={spec.y_label as string | undefined}
+                      />
                     )}
                   </div>
                   );

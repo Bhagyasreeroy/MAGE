@@ -1,7 +1,10 @@
 # MAGE — Project Progress & Integration Checklist
 
 > **Purpose:** Track what's built vs. pending against the Project Proposal & Presentation.
-> **Last audited:** 2026-07-24 (branch `feat/m2-goal-orchestrator`, post-merge of `integration/combined-features`)
+> **Last audited:** 2026-08-17 (branch `feat/m2-goal-orchestrator`)
+> **⚠️ This file is the 24 Jul audit, updated in place.** For everything built since, read
+> `docs/BUILD_LOG_2026-08-11.md` (11–12 Aug) and `docs/BUILD_LOG_2026-08-17.md` (17 Aug) —
+> they supersede any status claim here that they contradict.
 > **Legend:** ✅ done · 🟡 partial · ❌ not started · ⚠️ built but not truly wired
 
 ---
@@ -61,10 +64,10 @@ The **happy path works end-to-end**: upload CSV → goal classified → mined �
 - [x] ✅ Histogram, boxplot, categorical bar
 - [x] ✅ **Chart set now conditioned on planner `charts` directive** — task types yield different chart sets *(done 2026-07-24; see §3-A)*
 - [x] ✅ **Scatter** (two most-correlated numerics) + **missingness matrix** added *(done 2026-07-24)*
-- [ ] 🟡 **grouped_bar / box_by_class / pairplot / highlighted_scatter** — routed but approximated (mapped to bar/box/cluster_scatter/scatter); dedicated builders still TODO
-- [ ] ❌ **Violin plots** — *docs, absent*
-- [ ] ❌ **Line charts** (temporal trends) — *docs, absent*
-- [ ] ❌ **Choropleths** (geospatial) — *docs, absent*
+- [x] ✅ **grouped_bar / box_by_class / pairplot / highlighted_scatter** — dedicated builders, no longer approximations *(done 2026-08-17)*
+- [x] ✅ **Violin plots** *(done 2026-08-17)*
+- [x] ✅ **Line charts** (temporal trends, text-date parsing) *(done 2026-08-17)*
+- [ ] ❌ **Choropleths** (geospatial) — *docs, absent; no sample dataset has geospatial columns*
 
 ### M5 — RAG Pipeline
 - [x] ✅ Local sentence-transformers embeddings (`all-MiniLM-L6-v2`, 384-dim) — `rag/embeddings.py`

@@ -268,7 +268,7 @@ def build():
              "Done (corr, IQR, PCA, KMeans, DBSCAN, Isolation Forest, class balance, linearity); time-series pending"],
             ["M4 — Visualization Agent",
              "Goal-conditioned chart selection.",
-             "Done (heatmap, cluster/scatter, histogram, box, bar, missingness); violin/line/choropleth pending"],
+             "Done (14 chart types incl. grouped bar, box-by-class, pairplot, highlighted scatter, violin, line); choropleth pending"],
             ["M5 — RAG Pipeline",
              "Retrieval-grounded methodology with citations.",
              "Done (local embeddings, FAISS/Chroma, top-k retrieval, citations)"],
@@ -344,13 +344,13 @@ def build():
         table([
             ["Metric", "MAGE", "AutoEDA baseline"],
             ["Cross-goal computation divergence (Jaccard)", "0.940", "0.000"],
-            ["Cross-goal chart divergence (Jaccard)", "0.942", "0.000"],
+            ["Cross-goal chart divergence (Jaccard)", "0.979", "0.000"],
             ["Task-relevant computation precision", "1.000", "0.400"],
             ["Task-relevant computation recall", "0.601", "0.539"],
             ["Task-relevant F1", "0.749", "0.458"],
             ["Citation coverage (FR-03)", "1.000", "—"],
             ["Goal classification accuracy", "1.000", "—"],
-            ["Maximum end-to-end runtime (FR-05)", "2.09 s", "—"],
+            ["Maximum end-to-end runtime (FR-05)", "1.56 s", "—"],
         ], widths=[3.0 * inch, 1.5 * inch, 1.5 * inch]),
         sp(6),
         p("The headline figure is the first row. A divergence of 0.940 means that changing only the stated goal "
@@ -386,7 +386,7 @@ def build():
             ["FR-02", "Goal conditions all computations, not post-hoc", "Met (plan + execution)"],
             ["FR-03", "Every recommendation carries a RAG citation", "Met"],
             ["FR-04", "Expertise level visibly alters output language", "Met (3 registers)"],
-            ["FR-05", "End-to-end analysis < 60s for <100k rows", "Met (benchmarked; max 2.09 s)"],
+            ["FR-05", "End-to-end analysis < 60s for <100k rows", "Met (benchmarked; max 1.56 s)"],
             ["FR-06", "Every agent step logged / inspectable", "Met"],
             ["NFR-01", "Horizontal scaling via containerization", "Docker; K8s stretch"],
             ["NFR-02", "Incremental vector indexing", "Pending"],
@@ -443,7 +443,7 @@ def build():
     # ── 10. Testing ─────────────────────────────────────────────────────────
     story += [
         h1("11. Testing & Verification"),
-        p("The system is covered by an automated test suite of <b>385 tests</b> spanning the agents, the RAG "
+        p("The system is covered by an automated test suite of <b>573 tests</b> spanning the agents, the RAG "
           "layer, the backend services, and the evaluation harness. Coverage includes:"),
         bullets([
             "Ingestion — every file format plus PDF, database, and REST sources, and the source-type router.",
@@ -480,9 +480,10 @@ def build():
         bullets([
             "<b>LLM provider integration</b> — wire the swappable interface to synthesise richer, fully role-adaptive recommendation prose (opt-in, with deterministic fallback).",
             "<b>Asynchronous job queue</b> — Celery + Redis. The WebSocket layer already delivers live progress, so this is architectural completeness rather than user-facing gain.",
-            "<b>Run memory</b> — a persistent store of prior runs retrieved alongside the knowledge base, realising the \"improves with use\" half of the RAG objective.",
-            "<b>Knowledge-base expansion</b> — the corpus is five documents; retrieval degrades outside those topics. Markdown tables are currently stripped from retrieved text and should be preserved.",
-            "<b>Remaining algorithms</b> — time-series decomposition; violin, line, and choropleth charts; dedicated builders for four chart types currently served by approximations; LIME as a second attribution method.",
+            "<b>Session-scoped data retention (NFR-04)</b> — uploaded datasets are currently kept indefinitely; a TTL-based cleanup tied to the session would close the requirement.",
+            "<b>Rate limiting</b> — currently recommended via a reverse proxy in production rather than enforced in the application.",
+            "<b>Model-driven orchestration</b> — the Reason/Act/Observe loop is presently a fixed four-step traversal of a statically built plan rather than a model-driven cycle.",
+            "<b>Remaining algorithms</b> — time-series decomposition; choropleth charts for geospatial data; LIME as a second attribution method.",
             "<b>Extended ingestion</b> — OCR for scanned documents (deliberately deferred).",
         ]),
     ]
