@@ -347,9 +347,12 @@ boxplots degrade to a table; no CSV export; `generate_pdf` runs synchronously.
 ## 6. Complete gap inventory
 
 **Cross-cutting (highest leverage)**
-1. **LLM backbone stubbed.** `openai_api_key` / `anthropic_api_key` empty in `core/config.py`;
-   `langchain-openai` installed, `anthropic` not; **no `.messages.create` / `.chat.completions`
-   anywhere**. Caps Objectives 3 and 6 and makes NFR-03 moot.
+1. ~~**LLM backbone stubbed.**~~ ✅ **Resolved 17 Aug** via the `integration/combined-features` merge:
+   `agents/llm_client.py` wires **Gemini** (`gemini-2.5-flash`) behind `GEMINI_API_KEY`, used opt-in
+   for LLM chat mode, "Explain further" synthesis, and ask-in-English → SQL. Every call site guards
+   on `is_configured` and falls back to the deterministic RAG path, so **no key is still a working
+   system**. Describe it as an *enhancement layer*, not the backbone. **NFR-03 is no longer moot but
+   still unmet** — there is no retry/backoff in the client.
 2. **No live/async layer.** No WebSocket → no live dashboard. No Celery/Redis → synchronous runs.
 3. **No evaluation harness.** Objective 7. Zero code. Was blocked on FR-02 executing; now unblocked.
 
@@ -376,9 +379,9 @@ and `evaluation/results.md`. Headline numbers from the 25-run sweep (5 datasets 
 
 | Metric | MAGE | AutoEDA baseline |
 |---|---|---|
-| **Cross-goal computation divergence** | **0.940** | **0.000** |
-| Cross-goal chart divergence | 0.942 | 0.000 |
-| Task-relevant precision | 1.000 | 0.400 |
+| **Cross-goal computation divergence** | **0.836** *(was 0.940 before the 17 Aug merge)* | **0.000** |
+| Cross-goal chart divergence | 0.920 | 0.000 |
+| Task-relevant precision | 0.883 | 0.400 |
 | Task-relevant recall | 0.601 | 0.539 |
 | Task-relevant F1 | 0.749 | 0.458 |
 | Citation coverage (FR-03) | 1.000 | — |
@@ -786,7 +789,7 @@ something an examiner reading the code could find.
 - Full Reason/Act/Observe trail with per-step latency.
 - Runs entirely locally with **no API key** — reproducible, deterministic, no data leaves the machine.
 - 8 input formats + live DB + REST ingestion.
-- 494 tests (all green, 12 Aug), including cross-user isolation on every export path and 91
+- 669 tests (all green, 17 Aug), including cross-user isolation on every export path and 91
   covering the evaluation harness.
 - The goal-conditioning claim is **measured, not asserted**: 0.950 cross-goal divergence vs. the
   baseline's 0.000, against a baseline verified exact against the real ydata-profiling.
@@ -794,9 +797,10 @@ something an examiner reading the code could find.
 **Concede plainly, before you are asked**
 - The "ReAct loop" is a fixed 4-step for-loop, not model-driven reason-act-observe. `MAX_REACT_STEPS`
   is therefore dead code, not an active guard.
-- No LLM is wired. Classification is keyword + embedding rules; recommendation text is template
-  paraphrase. This is why output is deterministic — a genuine strength for reproducibility, but not
-  the LLM reasoning the proposal envisages.
+- ~~No LLM is wired.~~ **Updated 17 Aug:** Gemini is wired, but **opt-in only**. Classification is
+  still keyword + embedding rules and the default recommendation text is still template paraphrase,
+  so the primary path remains deterministic — a genuine strength for reproducibility. Do not claim
+  the system reasons with an LLM by default.
 - ~~Four chart types are approximations, not dedicated builders.~~ **Fixed 17 Aug** — all four have dedicated builders; choropleths remain absent.
 - The knowledge base is small; retrieval degrades outside its 5 topics.
 - `run_memory` does not exist, so the "improves with use" benefit is currently unrealized.
@@ -849,7 +853,7 @@ before the final push so the submitted default branch is the real state of the p
 - **`PYTHONPATH=.` from repo root** for both uvicorn and pytest — `agents/`, `rag/`, and
   `data_pipeline/` are root-level packages. `orchestrator_service.py` even does a `sys.path.insert`
   to survive being launched from `backend/`.
-- **All 494 tests must stay green.** Any change to `MiningAgent` or `VisualizationAgent` must keep the
+- **All 669 tests must stay green.** Any change to `MiningAgent` or `VisualizationAgent` must keep the
   no-directives default profile intact — that backward-compatibility path is what several older
   tests rely on.
 - **Docstring style:** module header with a `────` underline, then a short prose description of
@@ -902,7 +906,7 @@ before the final push so the submitted default branch is the real state of the p
 > harness (Objective 7) — it's the project's validation claim and has no code yet. Before writing
 > code, confirm the metric design with me.
 >
-> Constraints: `PYTHONPATH=. pytest tests/ -v` must stay green (494 tests); keep the no-directives
+> Constraints: `PYTHONPATH=. pytest tests/ -v` must stay green (669 tests; needs Postgres + duckdb); keep the no-directives
 > default profile in MiningAgent/VisualizationAgent intact; match existing docstring style.
 
 ---

@@ -69,6 +69,13 @@ The **happy path works end-to-end**: upload CSV → goal classified → mined �
 - [x] ✅ **Line charts** (temporal trends, text-date parsing) *(done 2026-08-17)*
 - [ ] ❌ **Choropleths** (geospatial) — *docs, absent; no sample dataset has geospatial columns*
 
+### M-LLM — Gemini integration *(added 2026-08-17 via `integration/combined-features`)*
+- [x] ✅ `GeminiClient` over the REST API, model pinned to `gemini-2.5-flash` — `agents/llm_client.py`
+- [x] ✅ Opt-in LLM mode in follow-up chat; RAG-grounded "Explain further" — `agents/explain_agent.py`
+- [x] ✅ Ask-in-English → SQL in the dataset workbench — `backend/services/transform_service.py`
+- [x] ✅ Degrades to the deterministic RAG path when `GEMINI_API_KEY` is unset (guarded on `is_configured`)
+- [ ] ❌ **NFR-03 retry / exponential backoff** — the client raises `LLMError` and stops
+
 ### M5 — RAG Pipeline
 - [x] ✅ Local sentence-transformers embeddings (`all-MiniLM-L6-v2`, 384-dim) — `rag/embeddings.py`
 - [x] ✅ FAISS + Chroma vector store — `rag/vector_store.py`
@@ -134,11 +141,14 @@ The **happy path works end-to-end**: upload CSV → goal classified → mined �
 - **Backward compatible:** with no directives (standalone use), both agents run the full default profile — existing tests unchanged.
 - **Verified:** `tests/agents/test_goal_conditioning.py` proves two different goals on the same dataset produce different `computations_run` and different chart sets. This makes the same-dataset/different-goal thesis demonstrable and unblocks the evaluation harness (§3-D).
 
-### B. ⚠️ LLM backbone stubbed
-- Classification & recommendation text are deterministic/template-based.
-- `config.py` has empty `openai_api_key` / `anthropic_api_key`; `langchain-openai` installed, `anthropic` not.
-- No `.messages.create` / `.chat.completions` call anywhere.
-- **When wired:** goal classification gets model reasoning; recommendations get real synthesis + true per-audience rewriting.
+### B. ✅ LLM backbone wired (RESOLVED 2026-08-17)
+- **Gemini** is wired via `agents/llm_client.py` (`gemini-2.5-flash`, `GEMINI_API_KEY`).
+- Used **opt-in only**: LLM chat mode, "Explain further" synthesis, ask-in-English → SQL.
+- Classification and the *default* recommendation register remain deterministic — the primary path is
+  unchanged, which is what keeps output reproducible and keeps the system working with no key.
+- Citation integrity holds: retrieval runs first, the model synthesises on top, and the UI badges
+  which path produced each answer.
+- **Still open:** NFR-03 retry/backoff.
 
 ### C. ❌ No live/async execution layer
 - `run_analysis` awaits the orchestrator **synchronously**; response returns only when the whole pipeline finishes.
