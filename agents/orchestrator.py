@@ -79,6 +79,7 @@ class OrchestratorAgent:
         goal: str,
         expertise_level: str = "intermediate",
         data: dict[str, Any] | None = None,
+        mode: str = "rag",
         on_step: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """
@@ -92,6 +93,9 @@ class OrchestratorAgent:
             One of "beginner", "intermediate", "expert".
         data : dict, optional
             Data payload forwarded to agents (e.g. ``{"source": <file>}``).
+        mode : str
+            "rag" (default, grounded/cited) or "llm" (freeform Gemini
+            response) — read by RecommendationAgent only.
         on_step : callable, optional
             Invoked with each step dict immediately after it is appended to the
             log, enabling live streaming of the Reason/Act/Observe trail while
@@ -108,12 +112,13 @@ class OrchestratorAgent:
             Aggregated result: task_type, classification, ReAct step log,
             recommendations, rag_sources, and a summary.
         """
-        logger.info("OrchestratorAgent.run() | goal=%r expertise=%s", goal, expertise_level)
+        logger.info("OrchestratorAgent.run() | goal=%r expertise=%s mode=%s", goal, expertise_level, mode)
 
         context: dict[str, Any] = {
             "goal": goal,
             "expertise_level": expertise_level,
             "data": data or {},
+            "mode": mode,
         }
 
         # Prior-run memory arrives on the data payload (the service layer owns
@@ -203,7 +208,7 @@ class OrchestratorAgent:
                     if not classification.target_column:
                         classification.target_column = detected
 
-        return self._aggregate(goal, expertise_level, classification, steps, context)
+        return self._aggregate(goal, expertise_level, mode, classification, steps, context)
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
@@ -242,6 +247,7 @@ class OrchestratorAgent:
         self,
         goal: str,
         expertise_level: str,
+        mode: str,
         classification: GoalClassification,
         steps: list[dict[str, Any]],
         context: dict[str, Any],
@@ -268,6 +274,7 @@ class OrchestratorAgent:
         return {
             "goal": goal,
             "expertise_level": expertise_level,
+            "mode": mode,
             "task_type": classification.task_type.value,
             "classification": classification.model_dump(),
             "steps": steps,

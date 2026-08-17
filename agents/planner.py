@@ -59,11 +59,23 @@ _MINING_DIRECTIVES: dict[TaskType, dict[str, Any]] = {
         "priority": "kmeans",
     },
     TaskType.anomaly_detection: {
-        "computations": ["iqr_outliers", "isolation_forest", "distribution_tails"],
+        # "correlation" is here for the viz layer, not the analysis itself:
+        # the anomaly_detection chart directive below asks for a
+        # "highlighted_scatter", and VisualizationAgent picks that scatter's
+        # column pair from the correlation matrix — without it the chart
+        # silently can't be built and the directive quietly drops it.
+        "computations": ["iqr_outliers", "isolation_forest", "distribution_tails", "correlation"],
         "priority": "isolation_forest",
     },
     TaskType.reporting: {
-        "computations": ["descriptive_profile", "missingness", "distribution"],
+        # This is the fallback for broad, unfocused goals ("describe this
+        # dataset", "give me an overview") — there's no specific angle to
+        # narrow the analysis to, so it should be the *richest* profile, not
+        # the leanest. Previously this only computed descriptive stats and
+        # missingness, which left the visualization step with nothing to
+        # build a heatmap/outlier/importance chart from — the most common
+        # goal type produced the sparsest results.
+        "computations": ["descriptive_profile", "missingness", "distribution", "correlation", "feature_importance", "iqr_outliers"],
         "priority": "descriptive_profile",
     },
 }
@@ -73,14 +85,24 @@ _VIZ_DIRECTIVES: dict[TaskType, dict[str, Any]] = {
     TaskType.regression: {"charts": ["scatter", "correlation_heatmap", "feature_attribution"]},
     TaskType.clustering: {"charts": ["cluster_scatter", "pairplot"]},
     TaskType.anomaly_detection: {"charts": ["box", "highlighted_scatter"]},
+    # Reporting is the richest chart set for the same reason its computation
+    # set is the richest: it is the fallback for broad, unfocused goals, so
+    # there is no angle to narrow to.
+    #
     # `violin` and `line` are profiling charts — distribution shape and trend
     # over time — so reporting is their home. They are deliberately *not* added
     # to the supervised task types, where box_by_class already answers the
     # distribution question against the target and a time axis is incidental.
     # Both degrade to nothing when the data cannot support them (a constant
     # column, no datetime column), so reporting never loses a chart by having
-    # asked for them.
-    TaskType.reporting: {"charts": ["histograms", "missingness_matrix", "violin", "line"]},
+    # asked for them. `grouped_bar` likewise falls back to a plain frequency
+    # bar here, since a reporting run has no target column to group by.
+    TaskType.reporting: {
+        "charts": [
+            "histograms", "missingness_matrix", "correlation_heatmap",
+            "feature_importance", "box", "grouped_bar", "violin", "line",
+        ]
+    },
 }
 
 

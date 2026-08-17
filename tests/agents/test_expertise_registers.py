@@ -250,6 +250,7 @@ class TestBackwardCompatibility:
         rendered = orchestrator._aggregate(  # noqa: SLF001 - exercising the render path directly
             goal="g",
             expertise_level="intermediate",
+            mode="rag",
             classification=orchestrator._classifier.classify("summarise this"),
             steps=[],
             context={"RecommendationAgent_output": {"recommendations": legacy}},
@@ -262,6 +263,7 @@ class TestBackwardCompatibility:
         rendered = orchestrator._aggregate(  # noqa: SLF001
             goal="g",
             expertise_level="beginner",
+            mode="rag",
             classification=orchestrator._classifier.classify("summarise this"),
             steps=[],
             context={"RecommendationAgent_output": {"recommendations": legacy}},
