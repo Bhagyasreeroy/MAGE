@@ -18,35 +18,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # readme to exist at build time) — leverages layer caching.
 COPY backend/pyproject.toml backend/README.md ./
 
-# Install pip + hatch, then install the project's dependencies
+# Install pip + hatch, then install the project's dependencies.
+#
+# pyproject.toml is the only source of truth, deliberately. There used to be a
+# hardcoded package list behind `2>/dev/null ||` as a fallback, and it had
+# drifted eight dependencies behind pyproject: scikit-learn, shap, reportlab,
+# pdfplumber, duckdb, authlib, itsdangerous, psycopg2-binary. Because stderr
+# was discarded, a failed resolution produced an image that *built cleanly* and
+# then died at runtime with nothing in the log explaining why — no models in
+# M3 at all (scikit-learn), no PDF export, no PDF ingestion, no OAuth, no
+# query console. A build that fails loudly beats an image that lies about
+# being complete, so if this step fails, let it fail.
+#
+# Torch is installed first, from PyTorch's CPU index, on purpose.
+# `sentence-transformers` depends on torch, and plain PyPI resolution on
+# linux/arm64 now drags in the whole CUDA stack — nvidia-cublas (543 MB),
+# nvidia-cudnn (445 MB), cusolver, cusparselt, nccl, triton and friends, about
+# 2.8 GB of wheels — into a container that will never see an NVIDIA GPU. That
+# bloat is what pushed this image to 9.87 GB and filled 49 GB of build cache.
+# MAGE's embeddings are CPU-only by design (all-MiniLM-L6-v2, no key, no GPU),
+# so pre-installing the CPU build means the project install below finds torch
+# already satisfied and never resolves the GPU variant.
 RUN pip install --upgrade pip hatch && \
-    pip install --no-cache-dir ".[dev]" 2>/dev/null || \
-    pip install --no-cache-dir \
-        fastapi \
-        "uvicorn[standard]" \
-        pytest \
-        pytest-asyncio \
-        python-multipart \
-        pydantic \
-        "pydantic[email]" \
-        pydantic-settings \
-        python-dotenv \
-        langchain \
-        langchain-community \
-        langchain-openai \
-        faiss-cpu \
-        chromadb \
-        sentence-transformers \
-        pandas \
-        numpy \
-        pyarrow \
-        openpyxl \
-        httpx \
-        "sqlalchemy[asyncio]" \
-        asyncpg \
-        aiosqlite \
-        "passlib[bcrypt]" \
-        "python-jose[cryptography]"
+    pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch && \
+    pip install --no-cache-dir ".[dev]"
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime
