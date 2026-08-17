@@ -146,7 +146,7 @@ def build():
           "adapted to the reader across three registers, from plain language to full technical framing."),
         p("This report documents the system design, the implementation, and an empirical evaluation of the central "
           "claim. Under a controlled same-dataset / different-goal design, varying only the stated goal changes "
-          "the set of statistical computations MAGE executes at a mean pairwise Jaccard distance of 0.940, against "
+          "the set of statistical computations MAGE executes at a mean pairwise Jaccard distance of 0.836, against "
           "0.000 for a generic AutoEDA baseline which by construction cannot vary its output by goal."),
     ]
 
@@ -343,17 +343,17 @@ def build():
         sp(6),
         table([
             ["Metric", "MAGE", "AutoEDA baseline"],
-            ["Cross-goal computation divergence (Jaccard)", "0.940", "0.000"],
-            ["Cross-goal chart divergence (Jaccard)", "0.979", "0.000"],
+            ["Cross-goal computation divergence (Jaccard)", "0.836", "0.000"],
+            ["Cross-goal chart divergence (Jaccard)", "0.920", "0.000"],
             ["Task-relevant computation precision", "1.000", "0.400"],
             ["Task-relevant computation recall", "0.601", "0.539"],
             ["Task-relevant F1", "0.749", "0.458"],
             ["Citation coverage (FR-03)", "1.000", "—"],
             ["Goal classification accuracy", "1.000", "—"],
-            ["Maximum end-to-end runtime (FR-05)", "1.56 s", "—"],
+            ["Maximum end-to-end runtime (FR-05)", "2.33 s", "—"],
         ], widths=[3.0 * inch, 1.5 * inch, 1.5 * inch]),
         sp(6),
-        p("The headline figure is the first row. A divergence of 0.940 means that changing only the stated goal "
+        p("The headline figure is the first row. A divergence of 0.836 means that changing only the stated goal "
           "changes almost the entire set of statistical computations that execute; the baseline's 0.000 means it "
           "runs exactly the same work every time. The runtime figure also discharges FR-05, with a worst case of "
           "roughly 2 seconds against a 60-second budget."),
@@ -386,7 +386,7 @@ def build():
             ["FR-02", "Goal conditions all computations, not post-hoc", "Met (plan + execution)"],
             ["FR-03", "Every recommendation carries a RAG citation", "Met"],
             ["FR-04", "Expertise level visibly alters output language", "Met (3 registers)"],
-            ["FR-05", "End-to-end analysis < 60s for <100k rows", "Met (benchmarked; max 1.56 s)"],
+            ["FR-05", "End-to-end analysis < 60s for <100k rows", "Met (benchmarked; max 2.33 s)"],
             ["FR-06", "Every agent step logged / inspectable", "Met"],
             ["NFR-01", "Horizontal scaling via containerization", "Docker; K8s stretch"],
             ["NFR-02", "Incremental vector indexing", "Pending"],
@@ -443,7 +443,7 @@ def build():
     # ── 10. Testing ─────────────────────────────────────────────────────────
     story += [
         h1("11. Testing & Verification"),
-        p("The system is covered by an automated test suite of <b>573 tests</b> spanning the agents, the RAG "
+        p("The system is covered by an automated test suite of <b>669 tests</b> spanning the agents, the RAG "
           "layer, the backend services, and the evaluation harness. Coverage includes:"),
         bullets([
             "Ingestion — every file format plus PDF, database, and REST sources, and the source-type router.",
@@ -478,7 +478,7 @@ def build():
     story += [
         h1("13. Future Work"),
         bullets([
-            "<b>LLM provider integration</b> — wire the swappable interface to synthesise richer, fully role-adaptive recommendation prose (opt-in, with deterministic fallback).",
+            "<b>LLM retry and backoff (NFR-03)</b> — Gemini is now wired for opt-in synthesis, but the client surfaces failures directly rather than retrying with exponential backoff.",
             "<b>Asynchronous job queue</b> — Celery + Redis. The WebSocket layer already delivers live progress, so this is architectural completeness rather than user-facing gain.",
             "<b>Session-scoped data retention (NFR-04)</b> — uploaded datasets are currently kept indefinitely; a TTL-based cleanup tied to the session would close the requirement.",
             "<b>Rate limiting</b> — currently recommended via a reverse proxy in production rather than enforced in the application.",
@@ -497,7 +497,7 @@ def build():
           "analysis is communicated differently depending on the reader's expertise. The implementation delivers a "
           "complete, tested end-to-end pipeline in which the core goal-conditioning claim is not merely "
           "demonstrable but <b>measured</b>: across 25 controlled runs holding the dataset constant and varying "
-          "only the goal, MAGE's executed computations diverge at a mean pairwise Jaccard distance of 0.940, "
+          "only the goal, MAGE's executed computations diverge at a mean pairwise Jaccard distance of 0.836, "
           "against 0.000 for a generic AutoEDA baseline that has no mechanism to receive a goal at all. Every "
           "recommendation carries a retrievable citation, feature attributions are produced by SHAP against the "
           "user's actual target, output adapts across three expertise registers, and the full agent trail streams "
