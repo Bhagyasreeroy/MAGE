@@ -48,20 +48,6 @@ export function storeTokens(access: string, refresh?: string): void {
   document.cookie = `mage_token=${access}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
 }
 
-/**
- * Store an access token without a refresh token — used for the OAuth
- * redirect flow, where the backend only issues a MAGE access token
- * (see backend/routers/oauth.py). A session started this way won't
- * auto-refresh on 401 and will require a full re-login once it expires.
- */
-export function storeAccessTokenOnly(access: string): void {
-  localStorage.setItem("mage_access_token", access);
-  // Also write the cookie so Next.js middleware recognizes the session —
-  // without this, the OAuth redirect lands on /dashboard, the guard sees no
-  // cookie, and bounces back to /signin?from=/dashboard.
-  document.cookie = `mage_token=${access}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
-}
-
 export function clearTokens(): void {
   localStorage.removeItem("mage_access_token");
   localStorage.removeItem("mage_refresh_token");
@@ -148,7 +134,14 @@ async function fetchWithAuthRetry(
 
 async function tryRefreshToken(): Promise<boolean> {
   const refreshToken = getRefreshToken();
-  if (!refreshToken) return false;
+  if (!refreshToken) {
+    // No refresh token to try (e.g. a Google OAuth session, which never
+    // gets one — see storeAccessTokenOnly). Clear the dead access token
+    // too, or the mage_token cookie lingers and the middleware keeps
+    // bouncing /signin back to /dashboard forever.
+    clearTokens();
+    return false;
+  }
 
   try {
     const res = await fetch(`${API_BASE}/auth/refresh`, {
@@ -216,12 +209,57 @@ export interface AnalysisRunSummary {
   created_at: string;
 }
 
+export interface SampleDataset {
+  filename: string;
+  title: string;
+  description: string;
+  size_kb: number;
+}
+
 export interface DatasetSummary {
   id: string;
   filename: string;
   row_count: number | null;
   column_count: number | null;
   created_at: string;
+  root_id: string;
+  parent_id: string | null;
+  version: number;
+  transform_type: string | null;
+}
+
+export interface ColumnStats {
+  min: number | null;
+  max: number | null;
+  mean: number | null;
+  unique_count: number | null;
+}
+
+export interface ColumnSummary {
+  name: string;
+  dtype: string;
+  missing_count: number;
+  stats: ColumnStats | null;
+}
+
+export interface DatasetDetail extends DatasetSummary {
+  column_summary: ColumnSummary[];
+  transform_params: Record<string, unknown> | null;
+  report: string[] | null;
+}
+
+export interface DatasetPreview {
+  columns: string[];
+  dtypes: string[];
+  rows: unknown[][];
+  total_rows: number;
+  offset: number;
+  limit: number;
+}
+
+export interface TransformOp {
+  type: string;
+  [key: string]: unknown;
 }
 
 export async function registerUser(
@@ -286,8 +324,84 @@ export async function fetchDatasets(): Promise<DatasetSummary[]> {
   return apiFetch<DatasetSummary[]>("/analysis/datasets", { auth: true });
 }
 
+export async function fetchSampleDatasets(): Promise<SampleDataset[]> {
+  return apiFetch<SampleDataset[]>("/analysis/sample-datasets", { auth: true });
+}
+
+export async function loadSampleDataset(filename: string): Promise<{ dataset_id: string | null }> {
+  return apiFetch(`/analysis/sample-datasets/${encodeURIComponent(filename)}/load`, {
+    method: "POST",
+    auth: true,
+  });
+}
+
 export async function deleteDataset(datasetId: string): Promise<void> {
   await apiFetch(`/analysis/datasets/${datasetId}`, { method: "DELETE", auth: true });
+}
+
+export async function fetchDatasetDetail(datasetId: string): Promise<DatasetDetail> {
+  return apiFetch<DatasetDetail>(`/analysis/datasets/${datasetId}`, { auth: true });
+}
+
+export async function fetchDatasetPreview(
+  datasetId: string,
+  offset = 0,
+  limit = 50,
+): Promise<DatasetPreview> {
+  return apiFetch<DatasetPreview>(
+    `/analysis/datasets/${datasetId}/preview?offset=${offset}&limit=${limit}`,
+    { auth: true },
+  );
+}
+
+export async function fetchDatasetVersions(rootId: string): Promise<DatasetSummary[]> {
+  return apiFetch<DatasetSummary[]>(`/analysis/datasets/${rootId}/versions`, { auth: true });
+}
+
+export async function applyTransform(datasetId: string, ops: TransformOp[]): Promise<DatasetDetail> {
+  return apiFetch<DatasetDetail>(`/analysis/datasets/${datasetId}/transform`, {
+    method: "POST",
+    auth: true,
+    body: JSON.stringify({ ops }),
+  });
+}
+
+export async function runQuery(datasetId: string, sql: string): Promise<DatasetPreview> {
+  return apiFetch<DatasetPreview>(`/analysis/datasets/${datasetId}/query`, {
+    method: "POST",
+    auth: true,
+    body: JSON.stringify({ sql }),
+  });
+}
+
+export async function saveQuery(datasetId: string, sql: string): Promise<DatasetDetail> {
+  return apiFetch<DatasetDetail>(`/analysis/datasets/${datasetId}/query/save`, {
+    method: "POST",
+    auth: true,
+    body: JSON.stringify({ sql }),
+  });
+}
+
+export async function askInEnglish(
+  datasetId: string,
+  question: string,
+): Promise<{ sql: string; preview: DatasetPreview }> {
+  return apiFetch(`/analysis/datasets/${datasetId}/query/nl`, {
+    method: "POST",
+    auth: true,
+    body: JSON.stringify({ question }),
+  });
+}
+
+export async function explainFinding(
+  finding: string,
+  goal: string = "",
+): Promise<{ explanation: string; sources: string[]; synthesized: boolean }> {
+  return apiFetch("/analysis/explain", {
+    method: "POST",
+    auth: true,
+    body: JSON.stringify({ finding, goal }),
+  });
 }
 
 // ── Ingestion + live streaming ──────────────────────────────────────────────

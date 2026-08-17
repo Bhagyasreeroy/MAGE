@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-17T16:37:10.052917+00:00",
+  "generated_at": "2026-08-17T17:01:24.039354+00:00",
   "environment": {
     "python": "3.13.7",
     "platform": "macOS-26.2-arm64-arm-64bit-Mach-O",
@@ -26,19 +26,19 @@
   "summary": {
     "total_runs": 25,
     "successful_runs": 25,
-    "mage_computation_divergence": 0.94,
+    "mage_computation_divergence": 0.8364,
     "baseline_computation_divergence": 0.0,
-    "mage_chart_divergence": 0.979,
-    "mean_precision": 1.0,
-    "mean_recall": 0.601,
+    "mage_chart_divergence": 0.9204,
+    "mean_precision": 0.8833,
+    "mean_recall": 0.6343,
     "mean_baseline_precision": 0.4,
     "mean_baseline_recall": 0.5391,
-    "mean_f1": 0.7488,
+    "mean_f1": 0.7321,
     "mean_baseline_f1": 0.458,
     "mean_citation_coverage": 1.0,
     "goal_classification_accuracy": 1.0,
-    "max_runtime_seconds": 1.561,
-    "mean_runtime_seconds": 0.273,
+    "max_runtime_seconds": 2.335,
+    "mean_runtime_seconds": 0.5,
     "fr05_under_60s": true
   },
   "per_dataset": [
@@ -52,14 +52,14 @@
       },
       "row_count": 400,
       "column_count": 8,
-      "mage_computation_divergence": 0.94,
+      "mage_computation_divergence": 0.8364,
       "baseline_computation_divergence": 0.0,
-      "mage_chart_divergence": 0.98,
+      "mage_chart_divergence": 0.9314,
       "computation_pairs": [
         {
           "a": "anomaly_detection",
           "b": "classification",
-          "distance": 1.0
+          "distance": 0.8571
         },
         {
           "a": "anomaly_detection",
@@ -69,12 +69,12 @@
         {
           "a": "anomaly_detection",
           "b": "regression",
-          "distance": 1.0
+          "distance": 0.8571
         },
         {
           "a": "anomaly_detection",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         },
         {
           "a": "classification",
@@ -89,7 +89,7 @@
         {
           "a": "classification",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         },
         {
           "a": "clustering",
@@ -104,7 +104,7 @@
         {
           "a": "regression",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         }
       ],
       "chart_pairs": [
@@ -126,7 +126,7 @@
         {
           "a": "anomaly_detection",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.875
         },
         {
           "a": "classification",
@@ -141,7 +141,7 @@
         {
           "a": "classification",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.8889
         },
         {
           "a": "clustering",
@@ -156,15 +156,15 @@
         {
           "a": "regression",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         }
       ],
-      "mean_precision": 1.0,
-      "mean_recall": 0.601,
+      "mean_precision": 0.8833,
+      "mean_recall": 0.6343,
       "mean_baseline_precision": 0.4,
       "mean_baseline_recall": 0.5391,
       "mean_citation_coverage": 1.0,
-      "max_runtime_seconds": 0.836
+      "max_runtime_seconds": 0.998
     },
     {
       "dataset": "iris",
@@ -174,14 +174,14 @@
       },
       "row_count": 150,
       "column_count": 5,
-      "mage_computation_divergence": 0.94,
+      "mage_computation_divergence": 0.8364,
       "baseline_computation_divergence": 0.0,
-      "mage_chart_divergence": 0.98,
+      "mage_chart_divergence": 0.9175,
       "computation_pairs": [
         {
           "a": "anomaly_detection",
           "b": "classification",
-          "distance": 1.0
+          "distance": 0.8571
         },
         {
           "a": "anomaly_detection",
@@ -191,12 +191,12 @@
         {
           "a": "anomaly_detection",
           "b": "regression",
-          "distance": 1.0
+          "distance": 0.8571
         },
         {
           "a": "anomaly_detection",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         },
         {
           "a": "classification",
@@ -211,7 +211,7 @@
         {
           "a": "classification",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         },
         {
           "a": "clustering",
@@ -226,7 +226,7 @@
         {
           "a": "regression",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         }
       ],
       "chart_pairs": [
@@ -248,7 +248,7 @@
         {
           "a": "anomaly_detection",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.875
         },
         {
           "a": "classification",
@@ -263,7 +263,7 @@
         {
           "a": "classification",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         },
         {
           "a": "clustering",
@@ -278,15 +278,15 @@
         {
           "a": "regression",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         }
       ],
-      "mean_precision": 1.0,
-      "mean_recall": 0.601,
+      "mean_precision": 0.8833,
+      "mean_recall": 0.6343,
       "mean_baseline_precision": 0.4,
       "mean_baseline_recall": 0.5391,
       "mean_citation_coverage": 1.0,
-      "max_runtime_seconds": 0.16
+      "max_runtime_seconds": 0.263
     },
     {
       "dataset": "wine",
@@ -296,14 +296,14 @@
       },
       "row_count": 178,
       "column_count": 14,
-      "mage_computation_divergence": 0.94,
+      "mage_computation_divergence": 0.8364,
       "baseline_computation_divergence": 0.0,
-      "mage_chart_divergence": 0.98,
+      "mage_chart_divergence": 0.9175,
       "computation_pairs": [
         {
           "a": "anomaly_detection",
           "b": "classification",
-          "distance": 1.0
+          "distance": 0.8571
         },
         {
           "a": "anomaly_detection",
@@ -313,12 +313,12 @@
         {
           "a": "anomaly_detection",
           "b": "regression",
-          "distance": 1.0
+          "distance": 0.8571
         },
         {
           "a": "anomaly_detection",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         },
         {
           "a": "classification",
@@ -333,7 +333,7 @@
         {
           "a": "classification",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         },
         {
           "a": "clustering",
@@ -348,7 +348,7 @@
         {
           "a": "regression",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         }
       ],
       "chart_pairs": [
@@ -370,7 +370,7 @@
         {
           "a": "anomaly_detection",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.875
         },
         {
           "a": "classification",
@@ -385,7 +385,7 @@
         {
           "a": "classification",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         },
         {
           "a": "clustering",
@@ -400,15 +400,15 @@
         {
           "a": "regression",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         }
       ],
-      "mean_precision": 1.0,
-      "mean_recall": 0.601,
+      "mean_precision": 0.8833,
+      "mean_recall": 0.6343,
       "mean_baseline_precision": 0.4,
       "mean_baseline_recall": 0.5391,
       "mean_citation_coverage": 1.0,
-      "max_runtime_seconds": 0.323
+      "max_runtime_seconds": 0.464
     },
     {
       "dataset": "breast_cancer",
@@ -418,14 +418,14 @@
       },
       "row_count": 569,
       "column_count": 31,
-      "mage_computation_divergence": 0.94,
+      "mage_computation_divergence": 0.8364,
       "baseline_computation_divergence": 0.0,
-      "mage_chart_divergence": 0.98,
+      "mage_chart_divergence": 0.9175,
       "computation_pairs": [
         {
           "a": "anomaly_detection",
           "b": "classification",
-          "distance": 1.0
+          "distance": 0.8571
         },
         {
           "a": "anomaly_detection",
@@ -435,12 +435,12 @@
         {
           "a": "anomaly_detection",
           "b": "regression",
-          "distance": 1.0
+          "distance": 0.8571
         },
         {
           "a": "anomaly_detection",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         },
         {
           "a": "classification",
@@ -455,7 +455,7 @@
         {
           "a": "classification",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         },
         {
           "a": "clustering",
@@ -470,7 +470,7 @@
         {
           "a": "regression",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         }
       ],
       "chart_pairs": [
@@ -492,7 +492,7 @@
         {
           "a": "anomaly_detection",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.875
         },
         {
           "a": "classification",
@@ -507,7 +507,7 @@
         {
           "a": "classification",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         },
         {
           "a": "clustering",
@@ -522,15 +522,15 @@
         {
           "a": "regression",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         }
       ],
-      "mean_precision": 1.0,
-      "mean_recall": 0.601,
+      "mean_precision": 0.8833,
+      "mean_recall": 0.6343,
       "mean_baseline_precision": 0.4,
       "mean_baseline_recall": 0.5391,
       "mean_citation_coverage": 1.0,
-      "max_runtime_seconds": 1.561
+      "max_runtime_seconds": 2.335
     },
     {
       "dataset": "diabetes",
@@ -540,14 +540,14 @@
       },
       "row_count": 442,
       "column_count": 11,
-      "mage_computation_divergence": 0.94,
+      "mage_computation_divergence": 0.8364,
       "baseline_computation_divergence": 0.0,
-      "mage_chart_divergence": 0.975,
+      "mage_chart_divergence": 0.9179,
       "computation_pairs": [
         {
           "a": "anomaly_detection",
           "b": "classification",
-          "distance": 1.0
+          "distance": 0.8571
         },
         {
           "a": "anomaly_detection",
@@ -557,12 +557,12 @@
         {
           "a": "anomaly_detection",
           "b": "regression",
-          "distance": 1.0
+          "distance": 0.8571
         },
         {
           "a": "anomaly_detection",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         },
         {
           "a": "classification",
@@ -577,7 +577,7 @@
         {
           "a": "classification",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         },
         {
           "a": "clustering",
@@ -592,7 +592,7 @@
         {
           "a": "regression",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.75
         }
       ],
       "chart_pairs": [
@@ -614,7 +614,7 @@
         {
           "a": "anomaly_detection",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.8571
         },
         {
           "a": "classification",
@@ -629,7 +629,7 @@
         {
           "a": "classification",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.8571
         },
         {
           "a": "clustering",
@@ -644,15 +644,15 @@
         {
           "a": "regression",
           "b": "reporting",
-          "distance": 1.0
+          "distance": 0.7143
         }
       ],
-      "mean_precision": 1.0,
-      "mean_recall": 0.601,
+      "mean_precision": 0.8833,
+      "mean_recall": 0.6343,
       "mean_baseline_precision": 0.4,
       "mean_baseline_recall": 0.5391,
       "mean_citation_coverage": 1.0,
-      "max_runtime_seconds": 0.247
+      "max_runtime_seconds": 0.424
     }
   ],
   "runs": [
@@ -678,7 +678,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.836,
+      "runtime_seconds": 0.998,
       "row_count": 400,
       "column_count": 8,
       "status": "success",
@@ -719,7 +719,7 @@
       "precision": 1.0,
       "recall": 0.5714,
       "f1": 0.7273,
-      "runtime_seconds": 0.122,
+      "runtime_seconds": 0.172,
       "row_count": 400,
       "column_count": 8,
       "status": "success",
@@ -759,7 +759,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.175,
+      "runtime_seconds": 0.255,
       "row_count": 400,
       "column_count": 8,
       "status": "success",
@@ -784,6 +784,7 @@
       "intended_task_type": "anomaly_detection",
       "classified_task_type": "anomaly_detection",
       "computations_run": [
+        "correlation",
         "distribution_tails",
         "iqr_outliers",
         "isolation_forest"
@@ -795,10 +796,10 @@
       "recommendation_count": 5,
       "cited_source_count": 5,
       "citation_coverage": 1.0,
-      "precision": 1.0,
+      "precision": 0.75,
       "recall": 0.6,
-      "f1": 0.75,
-      "runtime_seconds": 0.161,
+      "f1": 0.6667,
+      "runtime_seconds": 0.226,
       "row_count": 400,
       "column_count": 8,
       "status": "success",
@@ -823,11 +824,18 @@
       "intended_task_type": "reporting",
       "classified_task_type": "reporting",
       "computations_run": [
+        "correlation",
         "descriptive_profile",
         "distribution",
+        "feature_importance",
+        "iqr_outliers",
         "missingness"
       ],
       "chart_types": [
+        "bar",
+        "boxplot",
+        "correlation_heatmap",
+        "feature_importance",
         "histogram",
         "missingness_matrix",
         "violin"
@@ -835,10 +843,10 @@
       "recommendation_count": 5,
       "cited_source_count": 5,
       "citation_coverage": 1.0,
-      "precision": 1.0,
-      "recall": 0.5,
+      "precision": 0.6667,
+      "recall": 0.6667,
       "f1": 0.6667,
-      "runtime_seconds": 0.058,
+      "runtime_seconds": 0.096,
       "row_count": 400,
       "column_count": 8,
       "status": "success",
@@ -879,7 +887,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.16,
+      "runtime_seconds": 0.245,
       "row_count": 150,
       "column_count": 5,
       "status": "success",
@@ -920,7 +928,7 @@
       "precision": 1.0,
       "recall": 0.5714,
       "f1": 0.7273,
-      "runtime_seconds": 0.156,
+      "runtime_seconds": 0.22,
       "row_count": 150,
       "column_count": 5,
       "status": "success",
@@ -960,7 +968,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.081,
+      "runtime_seconds": 0.125,
       "row_count": 150,
       "column_count": 5,
       "status": "success",
@@ -985,6 +993,7 @@
       "intended_task_type": "anomaly_detection",
       "classified_task_type": "anomaly_detection",
       "computations_run": [
+        "correlation",
         "distribution_tails",
         "iqr_outliers",
         "isolation_forest"
@@ -996,10 +1005,10 @@
       "recommendation_count": 5,
       "cited_source_count": 5,
       "citation_coverage": 1.0,
-      "precision": 1.0,
+      "precision": 0.75,
       "recall": 0.6,
-      "f1": 0.75,
-      "runtime_seconds": 0.113,
+      "f1": 0.6667,
+      "runtime_seconds": 0.263,
       "row_count": 150,
       "column_count": 5,
       "status": "success",
@@ -1024,11 +1033,18 @@
       "intended_task_type": "reporting",
       "classified_task_type": "reporting",
       "computations_run": [
+        "correlation",
         "descriptive_profile",
         "distribution",
+        "feature_importance",
+        "iqr_outliers",
         "missingness"
       ],
       "chart_types": [
+        "bar",
+        "boxplot",
+        "correlation_heatmap",
+        "feature_importance",
         "histogram",
         "missingness_matrix",
         "violin"
@@ -1036,10 +1052,10 @@
       "recommendation_count": 5,
       "cited_source_count": 5,
       "citation_coverage": 1.0,
-      "precision": 1.0,
-      "recall": 0.5,
+      "precision": 0.6667,
+      "recall": 0.6667,
       "f1": 0.6667,
-      "runtime_seconds": 0.02,
+      "runtime_seconds": 0.124,
       "row_count": 150,
       "column_count": 5,
       "status": "success",
@@ -1080,7 +1096,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.323,
+      "runtime_seconds": 0.464,
       "row_count": 178,
       "column_count": 14,
       "status": "success",
@@ -1121,7 +1137,7 @@
       "precision": 1.0,
       "recall": 0.5714,
       "f1": 0.7273,
-      "runtime_seconds": 0.271,
+      "runtime_seconds": 0.395,
       "row_count": 178,
       "column_count": 14,
       "status": "success",
@@ -1161,7 +1177,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.123,
+      "runtime_seconds": 0.164,
       "row_count": 178,
       "column_count": 14,
       "status": "success",
@@ -1186,6 +1202,7 @@
       "intended_task_type": "anomaly_detection",
       "classified_task_type": "anomaly_detection",
       "computations_run": [
+        "correlation",
         "distribution_tails",
         "iqr_outliers",
         "isolation_forest"
@@ -1197,10 +1214,10 @@
       "recommendation_count": 5,
       "cited_source_count": 5,
       "citation_coverage": 1.0,
-      "precision": 1.0,
+      "precision": 0.75,
       "recall": 0.6,
-      "f1": 0.75,
-      "runtime_seconds": 0.215,
+      "f1": 0.6667,
+      "runtime_seconds": 0.323,
       "row_count": 178,
       "column_count": 14,
       "status": "success",
@@ -1225,11 +1242,18 @@
       "intended_task_type": "reporting",
       "classified_task_type": "reporting",
       "computations_run": [
+        "correlation",
         "descriptive_profile",
         "distribution",
+        "feature_importance",
+        "iqr_outliers",
         "missingness"
       ],
       "chart_types": [
+        "bar",
+        "boxplot",
+        "correlation_heatmap",
+        "feature_importance",
         "histogram",
         "missingness_matrix",
         "violin"
@@ -1237,10 +1261,10 @@
       "recommendation_count": 5,
       "cited_source_count": 5,
       "citation_coverage": 1.0,
-      "precision": 1.0,
-      "recall": 0.5,
+      "precision": 0.6667,
+      "recall": 0.6667,
       "f1": 0.6667,
-      "runtime_seconds": 0.051,
+      "runtime_seconds": 0.265,
       "row_count": 178,
       "column_count": 14,
       "status": "success",
@@ -1281,7 +1305,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.571,
+      "runtime_seconds": 0.761,
       "row_count": 569,
       "column_count": 31,
       "status": "success",
@@ -1322,7 +1346,7 @@
       "precision": 1.0,
       "recall": 0.5714,
       "f1": 0.7273,
-      "runtime_seconds": 1.561,
+      "runtime_seconds": 1.851,
       "row_count": 569,
       "column_count": 31,
       "status": "success",
@@ -1362,7 +1386,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.214,
+      "runtime_seconds": 0.343,
       "row_count": 569,
       "column_count": 31,
       "status": "success",
@@ -1387,6 +1411,7 @@
       "intended_task_type": "anomaly_detection",
       "classified_task_type": "anomaly_detection",
       "computations_run": [
+        "correlation",
         "distribution_tails",
         "iqr_outliers",
         "isolation_forest"
@@ -1398,10 +1423,10 @@
       "recommendation_count": 5,
       "cited_source_count": 5,
       "citation_coverage": 1.0,
-      "precision": 1.0,
+      "precision": 0.75,
       "recall": 0.6,
-      "f1": 0.75,
-      "runtime_seconds": 0.727,
+      "f1": 0.6667,
+      "runtime_seconds": 2.335,
       "row_count": 569,
       "column_count": 31,
       "status": "success",
@@ -1426,11 +1451,18 @@
       "intended_task_type": "reporting",
       "classified_task_type": "reporting",
       "computations_run": [
+        "correlation",
         "descriptive_profile",
         "distribution",
+        "feature_importance",
+        "iqr_outliers",
         "missingness"
       ],
       "chart_types": [
+        "bar",
+        "boxplot",
+        "correlation_heatmap",
+        "feature_importance",
         "histogram",
         "missingness_matrix",
         "violin"
@@ -1438,10 +1470,10 @@
       "recommendation_count": 5,
       "cited_source_count": 5,
       "citation_coverage": 1.0,
-      "precision": 1.0,
-      "recall": 0.5,
+      "precision": 0.6667,
+      "recall": 0.6667,
       "f1": 0.6667,
-      "runtime_seconds": 0.137,
+      "runtime_seconds": 1.679,
       "row_count": 569,
       "column_count": 31,
       "status": "success",
@@ -1481,7 +1513,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.154,
+      "runtime_seconds": 0.209,
       "row_count": 442,
       "column_count": 11,
       "status": "success",
@@ -1522,7 +1554,7 @@
       "precision": 1.0,
       "recall": 0.5714,
       "f1": 0.7273,
-      "runtime_seconds": 0.153,
+      "runtime_seconds": 0.192,
       "row_count": 442,
       "column_count": 11,
       "status": "success",
@@ -1562,7 +1594,7 @@
       "precision": 1.0,
       "recall": 0.6667,
       "f1": 0.8,
-      "runtime_seconds": 0.15,
+      "runtime_seconds": 0.165,
       "row_count": 442,
       "column_count": 11,
       "status": "success",
@@ -1587,6 +1619,7 @@
       "intended_task_type": "anomaly_detection",
       "classified_task_type": "anomaly_detection",
       "computations_run": [
+        "correlation",
         "distribution_tails",
         "iqr_outliers",
         "isolation_forest"
@@ -1598,10 +1631,10 @@
       "recommendation_count": 5,
       "cited_source_count": 5,
       "citation_coverage": 1.0,
-      "precision": 1.0,
+      "precision": 0.75,
       "recall": 0.6,
-      "f1": 0.75,
-      "runtime_seconds": 0.247,
+      "f1": 0.6667,
+      "runtime_seconds": 0.424,
       "row_count": 442,
       "column_count": 11,
       "status": "success",
@@ -1626,11 +1659,17 @@
       "intended_task_type": "reporting",
       "classified_task_type": "reporting",
       "computations_run": [
+        "correlation",
         "descriptive_profile",
         "distribution",
+        "feature_importance",
+        "iqr_outliers",
         "missingness"
       ],
       "chart_types": [
+        "boxplot",
+        "correlation_heatmap",
+        "feature_importance",
         "histogram",
         "missingness_matrix",
         "violin"
@@ -1638,10 +1677,10 @@
       "recommendation_count": 5,
       "cited_source_count": 5,
       "citation_coverage": 1.0,
-      "precision": 1.0,
-      "recall": 0.5,
+      "precision": 0.6667,
+      "recall": 0.6667,
       "f1": 0.6667,
-      "runtime_seconds": 0.034,
+      "runtime_seconds": 0.2,
       "row_count": 442,
       "column_count": 11,
       "status": "success",

@@ -146,6 +146,7 @@ class OrchestratorService:
             goal=request.goal,
             expertise_level=request.expertise_level.value,
             data=data,
+            mode=request.mode.value,
             on_step=on_step,
         )
 
@@ -188,6 +189,7 @@ class OrchestratorService:
         return AnalysisResponse(
             goal=request.goal,
             expertise_level=request.expertise_level,
+            mode=request.mode,
             task_type=raw_result.get("task_type"),
             classification=raw_result.get("classification"),
             steps=steps,

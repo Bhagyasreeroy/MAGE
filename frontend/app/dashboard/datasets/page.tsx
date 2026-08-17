@@ -16,24 +16,9 @@ const UploadIcon = () => (
   </svg>
 );
 
-interface ColumnStats {
-  min: number | null;
-  max: number | null;
-  mean: number | null;
-  unique_count: number | null;
-}
-
-interface ColumnSummary {
-  name: string;
-  dtype: string;
-  missing_count: number;
-  stats: ColumnStats | null;
-}
-
 interface IngestionResult {
   row_count: number;
   column_count: number;
-  column_summary: ColumnSummary[];
   warnings: string[];
   dataset_id: string | null;
 }
@@ -43,9 +28,7 @@ interface DatasetEntry {
   name: string;
   rowCount: number | null;
   columnCount: number | null;
-  columnSummary: ColumnSummary[] | null;
   warnings: string[];
-  expanded: boolean;
 }
 
 export default function DatasetsPage() {
@@ -65,9 +48,7 @@ export default function DatasetsPage() {
             name: d.filename,
             rowCount: d.row_count,
             columnCount: d.column_count,
-            columnSummary: null,
             warnings: [],
-            expanded: false,
           })),
         );
       })
@@ -89,9 +70,7 @@ export default function DatasetsPage() {
           name: file.name,
           rowCount: result.row_count,
           columnCount: result.column_count,
-          columnSummary: result.column_summary,
           warnings: result.warnings,
-          expanded: false,
         },
         ...prev,
       ]);
@@ -107,10 +86,6 @@ export default function DatasetsPage() {
     setIsDragOver(false);
     const file = e.dataTransfer.files?.[0];
     if (file) ingestFile(file);
-  }
-
-  function toggleExpanded(id: string) {
-    setDatasets((prev) => prev.map((d) => (d.id === id ? { ...d, expanded: !d.expanded } : d)));
   }
 
   async function removeDataset(id: string) {
@@ -221,37 +196,14 @@ export default function DatasetsPage() {
                   </div>
                 </div>
 
-                {ds.expanded && (
-                  <div className="mt-5 pt-5 border-t border-dusty-rose/15 space-y-3">
-                    {ds.warnings.map((w, i) => (
-                      <p key={i} className="text-xs text-navy/60">⚠ {w}</p>
-                    ))}
-                    {ds.columnSummary ? (
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                        {ds.columnSummary.map((col) => (
-                          <div key={col.name} className="bg-cream/50 rounded-xl p-3">
-                            <p className="text-xs font-bold text-navy truncate">{col.name}</p>
-                            <p className="text-[10px] text-navy/40 uppercase tracking-wide">{col.dtype}</p>
-                            <p className="text-[10px] text-navy/40 mt-1">{col.missing_count} missing</p>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-navy/40">
-                        Column-level detail is only shown right after upload — re-upload this file to see it again.
-                      </p>
-                    )}
-                  </div>
-                )}
-
                 {/* Actions */}
                 <div className="flex items-center gap-3 mt-5 pt-5 border-t border-dusty-rose/15">
-                  <button
-                    onClick={() => toggleExpanded(ds.id)}
+                  <Link
+                    href={`/dashboard/datasets/${ds.id}`}
                     className="text-xs font-medium text-navy/50 hover:text-navy bg-cream-dark/50 px-4 py-2 rounded-xl transition-colors"
                   >
-                    {ds.expanded ? 'Hide Details' : 'Preview'}
-                  </button>
+                    Open
+                  </Link>
                   <Link
                     href="/dashboard/analysis/new"
                     className="text-xs font-medium text-navy/50 hover:text-navy bg-cream-dark/50 px-4 py-2 rounded-xl transition-colors"

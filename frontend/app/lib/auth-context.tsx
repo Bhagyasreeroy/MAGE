@@ -12,16 +12,17 @@ import {
   fetchCurrentUser,
   getAccessToken,
   logout as clearSession,
-  storeAccessTokenOnly,
+  storeTokens,
   type UserProfile,
 } from './api';
 
 /**
  * The Google OAuth callback (backend/routers/oauth.py) redirects to
- * `/dashboard?token=<jwt>` rather than going through loginUser(), since it
- * issues the token itself instead of the frontend submitting credentials.
- * Pick that token up here so an OAuth sign-in actually results in a stored
- * session, then strip it from the URL so it doesn't linger in history.
+ * `/dashboard?token=<jwt>&refresh_token=<jwt>` rather than going through
+ * loginUser(), since it issues the tokens itself instead of the frontend
+ * submitting credentials. Pick them up here so an OAuth sign-in actually
+ * results in a stored, refreshable session, then strip them from the URL
+ * so they don't linger in history.
  */
 function consumeOAuthTokenFromUrl(): void {
   if (typeof window === 'undefined') return;
@@ -29,8 +30,9 @@ function consumeOAuthTokenFromUrl(): void {
   const token = params.get('token');
   if (!token) return;
 
-  storeAccessTokenOnly(token);
+  storeTokens(token, params.get('refresh_token') ?? undefined);
   params.delete('token');
+  params.delete('refresh_token');
   const query = params.toString();
   window.history.replaceState({}, '', window.location.pathname + (query ? `?${query}` : ''));
 }
@@ -71,9 +73,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!cancelled) setUser(profile);
       })
       .catch(() => {
-        // Token was rejected (e.g. expired). Clear both the localStorage token
-        // and the cookie before redirecting, so the route guard doesn't send
-        // us straight back here — the cause of the infinite loading spinner.
+        // The token was rejected (expired, revoked, or the account no
+        // longer exists) — clear it before redirecting. Otherwise the
+        // mage_token cookie survives, and the middleware (which only checks
+        // the cookie's presence, not its validity) bounces /signin straight
+        // back to /dashboard, which fetches the user again and loops.
         if (!cancelled) {
           clearSession();
           router.replace('/signin');

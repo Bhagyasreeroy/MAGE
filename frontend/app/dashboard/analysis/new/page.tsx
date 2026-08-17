@@ -3,7 +3,13 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { AgentStream } from '../../../components/agent-stream';
-import { fetchCurrentUser, ingestDataset } from '../../../lib/api';
+import {
+  fetchCurrentUser,
+  fetchSampleDatasets,
+  ingestDataset,
+  loadSampleDataset,
+  type SampleDataset,
+} from '../../../lib/api';
 import { useAnalysisStream } from '../../../lib/use-analysis-stream';
 
 type ExpertiseLevel = 'beginner' | 'intermediate' | 'expert';
@@ -47,6 +53,11 @@ export default function NewAnalysisPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [sampleDatasets, setSampleDatasets] = useState<SampleDataset[]>([]);
+  const [selectedSample, setSelectedSample] = useState<SampleDataset | null>(null);
+  const [sampleDatasetId, setSampleDatasetId] = useState<string | null>(null);
+  const [loadingSample, setLoadingSample] = useState<string | null>(null);
+
   const stream = useAnalysisStream();
   const isRunning = isUploading || stream.phase === 'connecting' || stream.phase === 'running';
 
@@ -58,7 +69,32 @@ export default function NewAnalysisPage() {
         }
       })
       .catch(() => {});
+
+    fetchSampleDatasets()
+      .then(setSampleDatasets)
+      .catch(() => {});
   }, []);
+
+  async function handleSelectSample(sample: SampleDataset) {
+    setError(null);
+    setLoadingSample(sample.filename);
+    try {
+      const result = await loadSampleDataset(sample.filename);
+      setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      setSelectedSample(sample);
+      setSampleDatasetId(result.dataset_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load sample dataset');
+    } finally {
+      setLoadingSample(null);
+    }
+  }
+
+  function clearSample() {
+    setSelectedSample(null);
+    setSampleDatasetId(null);
+  }
 
   // Hold on the finished trail briefly before navigating, so the last agent's
   // result is legible rather than flashing past on the way to the report.
@@ -79,8 +115,8 @@ export default function NewAnalysisPage() {
 
     try {
       // The socket carries a dataset id, not file bytes, so any new upload is
-      // persisted over HTTP first.
-      const datasetId = file ? (await ingestDataset(file)).dataset_id : null;
+      // persisted over HTTP first. A selected sample dataset already has an id.
+      const datasetId = file ? (await ingestDataset(file)).dataset_id : sampleDatasetId;
       stream.start({ goal, expertiseLevel, datasetId });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
@@ -167,7 +203,10 @@ export default function NewAnalysisPage() {
             type="file"
             accept=".csv,.tsv,.json,.parquet,.xlsx,.xls"
             className="hidden"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => {
+              setFile(e.target.files?.[0] ?? null);
+              clearSample();
+            }}
           />
           <button
             type="button"
@@ -193,6 +232,45 @@ export default function NewAnalysisPage() {
             >
               Remove file
             </button>
+          )}
+
+          {sampleDatasets.length > 0 && (
+            <div className="mt-6 pt-6 border-t border-dusty-rose/15">
+              <p className="text-xs font-bold text-navy/40 uppercase tracking-widest mb-3">
+                Or use a sample dataset
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {sampleDatasets.map((sample) => {
+                  const isSelected = selectedSample?.filename === sample.filename;
+                  const isLoadingThis = loadingSample === sample.filename;
+                  return (
+                    <button
+                      key={sample.filename}
+                      type="button"
+                      onClick={() => (isSelected ? clearSample() : handleSelectSample(sample))}
+                      disabled={loadingSample !== null}
+                      className={`text-left p-4 rounded-2xl border transition-all disabled:opacity-60 ${
+                        isSelected
+                          ? 'bg-lavender-light/40 border-lavender'
+                          : 'bg-cream/40 border-dusty-rose/20 hover:border-dusty-rose/40 hover:bg-cream/80'
+                      }`}
+                    >
+                      <p className="font-semibold text-sm text-navy mb-1">
+                        {sample.title}
+                        {isSelected && <span className="text-navy ml-2 text-xs font-bold">✓ selected</span>}
+                      </p>
+                      <p className="text-xs text-navy/50 leading-relaxed font-light mb-1.5">
+                        {sample.description}
+                      </p>
+                      <p className="text-[0.65rem] text-navy/30 font-medium">
+                        {sample.filename} · {sample.size_kb} KB
+                      </p>
+                      {isLoadingThis && <p className="text-xs text-navy/50 mt-2">Loading…</p>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           )}
         </div>
 

@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     # ── API Keys ───────────────────────────────────────────────────────────
     openai_api_key: str = ""
     anthropic_api_key: str = ""
+    gemini_api_key: str = ""
 
     # ── Vector Store ───────────────────────────────────────────────────────
     vector_store_backend: str = "chroma"  # "chroma" | "faiss"

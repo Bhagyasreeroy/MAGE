@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { storeAccessTokenOnly } from '../lib/api';
+import { storeTokens } from '../lib/api';
 
 const Spinner = () => (
   <div className="min-h-screen bg-cream flex items-center justify-center">
@@ -19,8 +19,9 @@ function AuthCallbackInner() {
 
   useEffect(() => {
     const token = params.get('token');
+    const refreshToken = params.get('refresh_token');
     if (token) {
-      storeAccessTokenOnly(token);
+      storeTokens(token, refreshToken ?? undefined);
       router.replace('/dashboard');
     } else {
       // No token — something went wrong, send back to signin

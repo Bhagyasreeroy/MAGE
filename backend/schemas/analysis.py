@@ -27,6 +27,19 @@ class ExpertiseLevel(str, Enum):
     expert = "expert"
 
 
+class RecommendationMode(str, Enum):
+    """How RecommendationAgent produces its response.
+
+    "rag" (default) is the original, grounded/cited path — deterministic,
+    every claim traces to a knowledge-base source. "llm" opts into a
+    freeform Gemini response reasoning over the same computed features,
+    with no citations (see agents/recommendation_agent.py).
+    """
+
+    rag = "rag"
+    llm = "llm"
+
+
 class TaskType(str, Enum):
     """
     Analytical task type inferred from the user's natural-language goal.
@@ -108,6 +121,10 @@ class AnalysisRequest(BaseModel):
         default_factory=dict,
         description="Arbitrary key-value metadata forwarded to the pipeline.",
     )
+    mode: RecommendationMode = Field(
+        default=RecommendationMode.rag,
+        description="'rag' (grounded/cited, default) or 'llm' (freeform Gemini response).",
+    )
 
 
 class StepResult(BaseModel):
@@ -161,6 +178,16 @@ class IngestionResult(BaseModel):
     )
 
 
+class SampleDataset(BaseModel):
+    """A bundled demo dataset in data/samples/, selectable from New Analysis
+    without the user needing the file on their own machine."""
+
+    filename: str = Field(..., description="File name within data/samples/, used to request loading it.")
+    title: str = Field(..., description="Human-readable name shown in the picker.")
+    description: str = Field(..., description="What the dataset demonstrates (clusters, outliers, etc.).")
+    size_kb: float = Field(..., description="File size in kilobytes.")
+
+
 class KnowledgeSource(BaseModel):
     """A single document in the RAG knowledge base."""
 
@@ -175,6 +202,10 @@ class AnalysisResponse(BaseModel):
 
     goal: str = Field(..., description="Echo of the original analytical goal.")
     expertise_level: ExpertiseLevel
+    mode: RecommendationMode = Field(
+        default=RecommendationMode.rag,
+        description="Which path produced these recommendations — 'rag' or 'llm'.",
+    )
     task_type: TaskType | None = Field(
         default=None,
         description="Task type inferred from the goal, driving the conditional pipeline.",
@@ -233,3 +264,92 @@ class DatasetSummary(BaseModel):
     row_count: int | None
     column_count: int | None
     created_at: datetime
+    root_id: str = Field(default="", description="Lineage root id — shared by every version of this dataset.")
+    parent_id: str | None = Field(default=None, description="The version this one was transformed from, if any.")
+    version: int = Field(default=1, description="1 for an original upload; increments per transform.")
+    transform_type: str | None = Field(
+        default=None, description="'clean' | 'query_save' | None (an original upload)."
+    )
+
+
+class DatasetDetail(DatasetSummary):
+    """Full detail for a single dataset version — backs the workbench page."""
+
+    column_summary: list[ColumnSummary] = Field(default_factory=list)
+    transform_params: dict[str, Any] | None = Field(
+        default=None, description="{'ops': [...]} for 'clean', {'sql': '...'} for 'query_save'."
+    )
+    report: list[str] | None = Field(
+        default=None,
+        description="Human-readable summary of what changed — only present on a freshly-created version.",
+    )
+
+
+class DatasetPreview(BaseModel):
+    """A page of rows from a dataset — backs the spreadsheet grid and the
+    query console's result table."""
+
+    columns: list[str] = Field(..., description="Column names, in order.")
+    dtypes: list[str] = Field(..., description="Pandas dtype string per column, same order as columns.")
+    rows: list[list[Any]] = Field(..., description="Row values, each inner list ordered like columns.")
+    total_rows: int = Field(..., description="Total row count of the full dataset (not just this page).")
+    offset: int = Field(default=0)
+    limit: int = Field(default=50)
+
+
+class TransformOpRequest(BaseModel):
+    """One staged operation — see data_pipeline/processing.py for the
+    supported 'type' values and their params."""
+
+    model_config = {"extra": "allow"}
+
+    type: str = Field(..., description="Op type, e.g. 'drop_columns', 'fill_missing', 'edit_cells'.")
+
+
+class TransformRequest(BaseModel):
+    """Body for POST /analysis/datasets/{id}/transform."""
+
+    ops: list[TransformOpRequest] = Field(..., min_length=1)
+
+
+class QueryRequest(BaseModel):
+    """Body for POST /analysis/datasets/{id}/query and .../query/save."""
+
+    sql: str = Field(..., min_length=1, max_length=10000)
+
+
+class NLQueryRequest(BaseModel):
+    """Body for POST /analysis/datasets/{id}/query/nl — a plain-English
+    question, translated to SQL by Gemini before running through the same
+    validated/sandboxed path as hand-typed SQL."""
+
+    question: str = Field(..., min_length=1, max_length=2000)
+
+
+class NLQueryResult(BaseModel):
+    """Response for the ask-in-English endpoint — the translated SQL is
+    always returned alongside the results, so it's never a black box."""
+
+    sql: str = Field(..., description="The SQL Gemini generated from the question.")
+    preview: DatasetPreview
+
+
+class ExplainRequest(BaseModel):
+    """Body for POST /analysis/explain — a specific, already-computed
+    finding (a recommendation's own text, a feature-importance result)
+    the user wants a deeper, RAG-grounded explanation of."""
+
+    finding: str = Field(..., min_length=1, max_length=1000)
+    goal: str = Field(default="", max_length=2000)
+
+
+class ExplainResult(BaseModel):
+    """Always grounded — synthesized=False means the LLM wasn't used
+    (unconfigured, failed, or nothing to add) and this is the same raw
+    retrieved excerpt RecommendationAgent has always surfaced."""
+
+    explanation: str
+    sources: list[str]
+    synthesized: bool = Field(
+        ..., description="True if the LLM synthesized across multiple sources; False if this is a raw excerpt."
+    )

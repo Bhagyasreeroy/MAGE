@@ -3,7 +3,12 @@
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { authFetchFormData, downloadAuthenticatedFile, fetchAnalysisRun } from '../../../lib/api';
+import {
+  authFetchFormData,
+  downloadAuthenticatedFile,
+  explainFinding,
+  fetchAnalysisRun,
+} from '../../../lib/api';
 import {
   BarChart,
   BoxByClass,
@@ -49,6 +54,7 @@ interface AnalysisResult {
   summary: string;
   dataset_id?: string | null;
   run_id?: string | null;
+  mode?: string;
 }
 
 interface DataQualityRow {
@@ -99,6 +105,84 @@ const DocumentIcon = () => (
   </svg>
 );
 
+/**
+ * A small "Explain further" affordance for a specific, already-computed
+ * finding (a recommendation's own text, a feature-importance result).
+ * Always grounded — POST /analysis/explain retrieves from the knowledge
+ * base first and only optionally has the LLM synthesize on top, so the
+ * result always carries at least one citation (or an honest "nothing
+ * found" message), never free-floating LLM text.
+ */
+function ExplainButton({ finding, goal }: { finding: string; goal: string }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [result, setResult] = useState<{ explanation: string; sources: string[]; synthesized: boolean } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleClick() {
+    if (isOpen) {
+      setIsOpen(false);
+      return;
+    }
+    setIsOpen(true);
+    if (result || isLoading) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await explainFinding(finding, goal);
+      setResult(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load an explanation');
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  return (
+    <div className="mt-2">
+      <button
+        onClick={handleClick}
+        className="text-[11px] font-semibold text-peach hover:text-navy transition-colors flex items-center gap-1"
+      >
+        <SparkleIcon />
+        {isOpen ? 'Hide explanation' : 'Explain further'}
+      </button>
+      {isOpen && (
+        <div className="mt-2 bg-cream/60 border border-dusty-rose/15 rounded-xl p-4">
+          {isLoading && <p className="text-xs text-navy/40">Thinking…</p>}
+          {error && <p className="text-xs text-dusty-rose">{error}</p>}
+          {result && (
+            <>
+              <div className="flex items-center gap-2 mb-2">
+                <span
+                  className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${
+                    result.synthesized ? 'text-peach bg-peach/10' : 'text-navy/40 bg-cream-dark/60'
+                  }`}
+                >
+                  {result.synthesized ? 'Synthesized by Gemini' : 'From the knowledge base'}
+                </span>
+              </div>
+              <Markdown text={result.explanation} className="text-xs text-navy/70 leading-relaxed mb-2" />
+              {result.sources.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {result.sources.map((src, i) => (
+                    <span
+                      key={i}
+                      className="bg-cream-dark/60 border border-dusty-rose/20 rounded-lg px-2 py-1 text-[10px] text-navy/50 flex items-center gap-1"
+                    >
+                      <DocumentIcon /> {src}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const SendIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
@@ -128,6 +212,7 @@ interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  mode?: 'rag' | 'llm';
 }
 
 export default function AnalysisResultPage() {
@@ -136,6 +221,7 @@ export default function AnalysisResultPage() {
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
+  const [chatMode, setChatMode] = useState<'rag' | 'llm'>('rag');
   const [exportingKey, setExportingKey] = useState<'pdf' | 'json' | 'citations' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
 
@@ -190,6 +276,7 @@ export default function AnalysisResultPage() {
       const formData = new FormData();
       formData.append('goal', goal);
       formData.append('expertise_level', result.expertise_level);
+      formData.append('mode', chatMode);
       if (result.dataset_id) {
         // Re-references the same uploaded dataset server-side — no
         // re-upload needed, and the full pipeline (real stats + RAG)
@@ -205,9 +292,14 @@ export default function AnalysisResultPage() {
       const reply =
         data.recommendations.length > 0
           ? data.recommendations.join('\n\n')
+          : chatMode === 'llm'
+          ? "The LLM didn't return a usable response — try rephrasing."
           : "I couldn't ground a recommendation for that — try rephrasing.";
 
-      setChatHistory((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: reply }]);
+      setChatHistory((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: 'assistant', content: reply, mode: (data.mode as 'rag' | 'llm') ?? chatMode },
+      ]);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Something went wrong';
       setChatHistory((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `Error: ${message}` }]);
@@ -370,6 +462,7 @@ export default function AnalysisResultPage() {
                   const isWide =
                     spec.type === 'correlation_heatmap' ||
                     spec.type === 'cluster_scatter' ||
+                    spec.type === 'scatter' ||
                     spec.type === 'pairplot' ||
                     spec.type === 'line';
                   return (
@@ -379,9 +472,26 @@ export default function AnalysisResultPage() {
                   >
                     <p className="text-xs font-bold text-navy mb-3">{spec.title}</p>
                     {spec.type === 'histogram' && <Histogram bins={spec.bins as { label: string; count: number }[]} />}
-                    {spec.type === 'bar' && <BarChart items={spec.items as { label: string; value: number }[]} />}
-                    {spec.type === 'feature_importance' && (
+                    {(spec.type === 'bar' || spec.type === 'feature_importance' || spec.type === 'missingness_matrix') && (
                       <BarChart items={spec.items as { label: string; value: number }[]} />
+                    )}
+                    {spec.type === 'feature_importance' && (() => {
+                      const items = spec.items as { label: string; value: number }[];
+                      const top = items[0];
+                      if (!top) return null;
+                      return (
+                        <ExplainButton
+                          finding={`'${top.label}' has the highest feature importance (PCA loading ${top.value}).`}
+                          goal={result.goal}
+                        />
+                      );
+                    })()}
+                    {spec.type === 'scatter' && (
+                      <ScatterPlot
+                        points={spec.points as { x: number; y: number }[]}
+                        xLabel={spec.x_label as string | undefined}
+                        yLabel={spec.y_label as string | undefined}
+                      />
                     )}
                     {spec.type === 'boxplot' && (
                       <BoxPlot
@@ -401,19 +511,10 @@ export default function AnalysisResultPage() {
                     {spec.type === 'cluster_scatter' && (
                       <ClusterScatter points={spec.points as { x: number; y: number; cluster: number }[]} />
                     )}
-                    {/* `scatter` and `missingness_matrix` were emitted by the
-                        agent but had no branch here, so regression and
-                        reporting runs rendered an empty card under a title. */}
-                    {spec.type === 'scatter' && (
-                      <ScatterPlot
-                        points={spec.points as { x: number; y: number }[]}
-                        xLabel={spec.x_label as string | undefined}
-                        yLabel={spec.y_label as string | undefined}
-                      />
-                    )}
-                    {spec.type === 'missingness_matrix' && (
-                      <BarChart items={spec.items as { label: string; value: number }[]} />
-                    )}
+                    {/* `scatter` and `missingness_matrix` are handled above —
+                        both were dispatched independently on this branch and on
+                        integration/combined-features, which is why the fix
+                        appears once rather than twice. */}
                     {spec.type === 'grouped_bar' && (
                       <GroupedBar
                         categories={spec.categories as string[]}
@@ -484,7 +585,10 @@ export default function AnalysisResultPage() {
               {result.recommendations.map((rec, idx) => (
                 <li key={idx} className="flex gap-3 text-navy/70 font-light">
                   <span className="text-navy-muted bg-cream-dark w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">{idx + 1}</span>
-                  <Markdown text={rec} className="flex-1 min-w-0 text-sm" />
+                  <div className="flex-1 min-w-0">
+                    <Markdown text={rec} className="text-sm" />
+                    <ExplainButton finding={rec} goal={result.goal} />
+                  </div>
                 </li>
               ))}
             </ul>
@@ -588,6 +692,11 @@ export default function AnalysisResultPage() {
                 <div className="flex items-center gap-2 mb-3 text-navy-muted">
                   <SparkleIcon />
                   <span className="text-xs font-bold uppercase tracking-widest">MAGE</span>
+                  {msg.mode === 'llm' && (
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-peach bg-peach/10 px-2 py-0.5 rounded-full">
+                      via Gemini
+                    </span>
+                  )}
                 </div>
               )}
               {msg.role === 'assistant' ? (
@@ -613,6 +722,28 @@ export default function AnalysisResultPage() {
       {/* ── Sticky Chat Input ──────────────────────────────────────── */}
       <div className="fixed bottom-0 left-64 right-0 p-8 bg-gradient-to-t from-cream via-cream to-transparent pointer-events-none z-30">
         <div className="max-w-4xl mx-auto pointer-events-auto">
+          <div className="flex items-center justify-center gap-1 mb-3">
+            <button
+              type="button"
+              onClick={() => setChatMode('rag')}
+              title="Grounded in the knowledge base — deterministic, every claim cites a source."
+              className={`text-xs font-semibold px-4 py-1.5 rounded-full transition-colors ${
+                chatMode === 'rag' ? 'bg-navy text-cream' : 'text-navy/40 hover:text-navy'
+              }`}
+            >
+              Grounded (RAG)
+            </button>
+            <button
+              type="button"
+              onClick={() => setChatMode('llm')}
+              title="Freeform response from Gemini — reasons over the same computed stats, no citations."
+              className={`text-xs font-semibold px-4 py-1.5 rounded-full transition-colors ${
+                chatMode === 'llm' ? 'bg-navy text-cream' : 'text-navy/40 hover:text-navy'
+              }`}
+            >
+              LLM (Gemini)
+            </button>
+          </div>
           <form onSubmit={handleSendMessage} className="relative group">
             <input
               type="text"
