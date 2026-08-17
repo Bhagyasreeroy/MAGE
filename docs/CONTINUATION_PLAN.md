@@ -712,7 +712,36 @@ The proposal's "improves with use" benefit. Minimum viable version: a `run_memor
 top-k most similar prior runs and include them as additional grounding context alongside the KB.
 Even a modest implementation converts a ❌ into a 🟡 on a stated objective.
 
-#### 2.4 Real builders for the four approximated charts — M4
+#### 2.4 Real builders for the four approximated charts — M4 · ✅ **DONE 17 Aug 2026**
+
+**Phase 2 complete.** All four have dedicated builders, plus `violin` and `line` which were absent
+entirely. 67 tests across `tests/agents/test_chart_builders.py` and
+`tests/backend/test_export_charts.py`; suite now **573 green**. Full write-up in
+`docs/BUILD_LOG_2026-08-17.md` §4.
+
+- Each builder returns `None` when the data cannot support it and the router falls back to the old
+  stand-in, so the real chart is the default whenever drawable and a directive never yields an empty
+  slot.
+- `violin` and `line` were added to the **reporting** task type only — decided and recorded *before*
+  re-running the harness, because it moves chart divergence in MAGE's favour (0.942 → **0.979**).
+  **Computation divergence, the headline number, is unchanged at 0.940**, and chart divergence has no
+  hand-labelled ground truth, so no relevance set was edited.
+- Wired through all three layers (spec builder, React, ReportLab), preserving the one-source-of-truth
+  /two-renderers rule.
+
+⚠️ **Four bugs found, all fixed** — two of them invisible to the unit tests and only caught by running
+the pipeline on an ingested CSV:
+1. `scatter` and `missingness_matrix` had **no branch in the frontend dispatch** — blank cards on
+   every regression, anomaly and reporting run.
+2. **Chart captions were never XML-escaped.** The 12 Aug `_esc()` fix missed `_chart_flowables`; a
+   column named `<revenue>` vanished and one containing `&` would 500 the whole export.
+3. **The line chart could never have fired on real data** — it required `datetime64`, but CSV
+   ingestion delivers text dates. It would only ever have passed in hand-built fixtures.
+4. **`grouped_bar` chose the timestamp column**, for the same dtype reason — text dates are typed
+   *categorical* by the profiler.
+
+*Original scoping notes, retained for reference:*
+
 `grouped_bar`, `box_by_class`, `pairplot`, `highlighted_scatter` currently map to stand-ins. Writing
 genuine builders removes a caveat you would otherwise have to disclose, and improves the visual
 quality of the demo.
@@ -768,7 +797,7 @@ something an examiner reading the code could find.
 - No LLM is wired. Classification is keyword + embedding rules; recommendation text is template
   paraphrase. This is why output is deterministic — a genuine strength for reproducibility, but not
   the LLM reasoning the proposal envisages.
-- Four chart types are approximations, not dedicated builders.
+- ~~Four chart types are approximations, not dedicated builders.~~ **Fixed 17 Aug** — all four have dedicated builders; choropleths remain absent.
 - The knowledge base is small; retrieval degrades outside its 5 topics.
 - `run_memory` does not exist, so the "improves with use" benefit is currently unrealized.
 - OCR was deliberately deferred.

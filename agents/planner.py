@@ -73,7 +73,14 @@ _VIZ_DIRECTIVES: dict[TaskType, dict[str, Any]] = {
     TaskType.regression: {"charts": ["scatter", "correlation_heatmap", "feature_attribution"]},
     TaskType.clustering: {"charts": ["cluster_scatter", "pairplot"]},
     TaskType.anomaly_detection: {"charts": ["box", "highlighted_scatter"]},
-    TaskType.reporting: {"charts": ["histograms", "missingness_matrix"]},
+    # `violin` and `line` are profiling charts — distribution shape and trend
+    # over time — so reporting is their home. They are deliberately *not* added
+    # to the supervised task types, where box_by_class already answers the
+    # distribution question against the target and a time axis is incidental.
+    # Both degrade to nothing when the data cannot support them (a constant
+    # column, no datetime column), so reporting never loses a chart by having
+    # asked for them.
+    TaskType.reporting: {"charts": ["histograms", "missingness_matrix", "violin", "line"]},
 }
 
 
