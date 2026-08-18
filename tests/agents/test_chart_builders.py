@@ -545,3 +545,52 @@ class TestCategoricalBarsSkipNonGroupableColumns:
         mining = MiningAgent().run(context={"dataframe": df, "goal": "profile"})
         result = agent.run(context={"dataframe": df, "goal": "profile", "MiningAgent_output": mining})
         assert not [s for s in result["viz_specs"] if s["type"] == "bar"]
+
+
+class TestColumnsWithNoDataAreNotCharted:
+    """
+    Found in the live browser evaluation on an all-null column.
+
+    ``_boxplot_specs(force_numeric=True)`` — the fallback the `box` directive
+    uses when no column has outliers — selected numeric columns from the
+    profile without checking whether their five-number summary exists. A column
+    that is entirely NaN is typed *numeric* with every statistic ``None``, so it
+    produced a boxplot of nothing: the card renders a title and the words "Not
+    enough data for a box plot".
+
+    Graceful, but wasted — and on a narrow frame it displaces a chart that
+    would have said something. Missingness is already reported by its own
+    chart; a distribution chart for a column with no distribution is noise.
+    """
+
+    # NOTE the fixtures use ``np.full(n, np.nan)`` rather than ``[None] * n``.
+    # That is not cosmetic: a list of None gives an *object* column, which the
+    # profiler types categorical, so it never reaches the boxplot path and the
+    # test would pass while exercising nothing. CSV ingestion produces float64
+    # NaN, which is typed numeric — the shape that actually triggered this.
+
+    def _specs(self, agent, df, charts):
+        mining = MiningAgent().run(context={"dataframe": df, "goal": "profile"})
+        return _viz(agent, df, mining, charts)
+
+    def test_an_all_null_column_gets_no_boxplot(self, agent) -> None:
+        df = pd.DataFrame({"x": [1.0, 2.0, 3.0, 4.0], "allnull": np.full(4, np.nan)})
+        boxed = [s["column"] for s in _of_type(self._specs(agent, df, ["box"]), "boxplot")]
+        assert "allnull" not in boxed, f"charted a column with no data: {boxed}"
+
+    def test_the_populated_column_is_still_boxed(self, agent) -> None:
+        """The guard must not throw away the useful chart alongside it."""
+        df = pd.DataFrame({"x": [1.0, 2.0, 3.0, 4.0], "allnull": np.full(4, np.nan)})
+        boxed = [s["column"] for s in _of_type(self._specs(agent, df, ["box"]), "boxplot")]
+        assert "x" in boxed
+
+    def test_a_frame_of_only_null_columns_yields_no_boxplots(self, agent) -> None:
+        df = pd.DataFrame({"a": np.full(5, np.nan), "b": np.full(5, np.nan)})
+        assert not _of_type(self._specs(agent, df, ["box"]), "boxplot")
+
+    def test_all_null_columns_are_absent_from_the_default_profile_too(self, agent) -> None:
+        df = pd.DataFrame({"x": [1.0, 2.0, 3.0, 4.0], "allnull": np.full(4, np.nan)})
+        mining = MiningAgent().run(context={"dataframe": df, "goal": "profile"})
+        result = agent.run(context={"dataframe": df, "goal": "profile", "MiningAgent_output": mining})
+        boxed = [s["column"] for s in result["viz_specs"] if s["type"] == "boxplot"]
+        assert "allnull" not in boxed
