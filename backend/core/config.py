@@ -28,6 +28,17 @@ class Settings(BaseSettings):
     backend_port: int = 8000
 
     # ── API Keys ───────────────────────────────────────────────────────────
+    # ── Rate limiting (M8) ────────────────────────────────────────────────
+    # Windows are per key, and the key is the authenticated user where there is
+    # one (see core/rate_limit.py) — not the host, which would put a whole lab
+    # behind one NAT into a single bucket. Kept configurable so the test suite,
+    # which hammers these endpoints, can switch it off rather than become
+    # timing-dependent.
+    rate_limit_enabled: bool = True
+    rate_limit_auth: str = "20/minute"        # login / register — credential stuffing
+    rate_limit_analysis: str = "30/minute"    # /analysis/run — CPU and the full pipeline
+    rate_limit_llm: str = "15/minute"         # explain + ask-in-English — spends Gemini quota
+
     openai_api_key: str = ""
     anthropic_api_key: str = ""
     gemini_api_key: str = ""

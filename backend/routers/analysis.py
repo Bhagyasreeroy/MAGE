@@ -41,6 +41,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Request,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
@@ -54,6 +55,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from agents.explain_agent import ExplainAgent
 from agents.ingestion_agent import IngestionAgent
 from backend.core.database import async_session, get_db
+from backend.core.rate_limit import (
+    analysis_limit,
+    limit_exempt_when_disabled,
+    limiter,
+    llm_limit,
+)
 from backend.core.deps import get_current_user
 from backend.core.security import decode_token
 from backend.models.user import User
@@ -117,7 +124,9 @@ _SAMPLE_DATASET_REGISTRY: dict[str, tuple[str, str]] = {
     status_code=status.HTTP_200_OK,
     summary="Run a goal-conditioned EDA pipeline",
 )
+@limiter.limit(analysis_limit, exempt_when=limit_exempt_when_disabled)
 async def run_analysis(
+    request: Request,
     goal: str = Form(...),
     expertise_level: ExpertiseLevel = Form(ExpertiseLevel.intermediate),
     mode: RecommendationMode = Form(RecommendationMode.rag),
@@ -785,9 +794,11 @@ async def save_dataset_query(
     status_code=status.HTTP_200_OK,
     summary="Translate a plain-English question into SQL and run it (preview only, not persisted)",
 )
+@limiter.limit(llm_limit, exempt_when=limit_exempt_when_disabled)
 async def nl_query_dataset(
+    request: Request,
     dataset_id: str,
-    request: NLQueryRequest,
+    body: NLQueryRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> NLQueryResult:
@@ -797,7 +808,7 @@ async def nl_query_dataset(
     the returned `sql` can be POSTed to /query/save unchanged to keep it."""
     try:
         sql, result_df = await transform_service.generate_sql_from_question(
-            db, current_user.id, dataset_id, request.question
+            db, current_user.id, dataset_id, body.question
         )
     except transform_service.TransformNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -815,13 +826,15 @@ async def nl_query_dataset(
     status_code=status.HTTP_200_OK,
     summary="Deeper, RAG-grounded explanation of a specific finding (LLM-synthesized when configured)",
 )
+@limiter.limit(llm_limit, exempt_when=limit_exempt_when_disabled)
 async def explain_finding(
-    request: ExplainRequest,
+    request: Request,
+    body: ExplainRequest,
     current_user: User = Depends(get_current_user),
 ) -> ExplainResult:
     """Stateless — the frontend already has the finding text client-side
     from the already-fetched analysis result, so no run_id lookup is
     needed. Always grounded: falls back to a raw retrieved excerpt
     (synthesized=False) rather than ever returning ungrounded LLM text."""
-    result = _explain_agent.explain(request.finding, request.goal)
+    result = _explain_agent.explain(body.finding, body.goal)
     return ExplainResult(**result)

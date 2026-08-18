@@ -11,8 +11,13 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+
+from backend.core.rate_limit import limiter
 from starlette.middleware.sessions import SessionMiddleware
 
 from backend.core.config import settings
@@ -63,6 +68,28 @@ app = FastAPI(
 # ── Middleware ────────────────────────────────────────────────────────────────
 # SessionMiddleware must be added first — authlib needs it for OAuth state
 app.add_middleware(SessionMiddleware, secret_key=settings.session_secret_key)
+
+# ── Rate limiting (M8) ────────────────────────────────────────────────────────
+# Registered before CORS so a 429 still carries the CORS headers a browser needs
+# to read it — otherwise the frontend sees an opaque network error instead of
+# "slow down", which is indistinguishable from the server being down.
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+
+
+@app.exception_handler(RateLimitExceeded)
+async def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    """Explain the refusal. A bare 429 with no body reads as a broken server."""
+    return JSONResponse(
+        status_code=429,
+        content={
+            "detail": (
+                "Rate limit exceeded — too many requests. "
+                f"This endpoint allows {exc.detail}. Please retry shortly."
+            )
+        },
+    )
+
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(

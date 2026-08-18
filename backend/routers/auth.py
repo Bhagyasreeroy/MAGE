@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jose import JWTError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.database import get_db
+from backend.core.rate_limit import auth_limit, limit_exempt_when_disabled, limiter
 from backend.core.deps import get_current_user
 from backend.core.security import (
     create_access_token,
@@ -66,7 +67,9 @@ def _to_user_response(user: User) -> UserResponse:
     status_code=status.HTTP_201_CREATED,
     summary="Register a new user account",
 )
+@limiter.limit(auth_limit, exempt_when=limit_exempt_when_disabled)
 async def register(
+    request: Request,
     body: RegisterRequest,
     db: AsyncSession = Depends(get_db),
 ) -> UserResponse:
@@ -106,7 +109,9 @@ async def register(
     response_model=TokenResponse,
     summary="Log in and receive JWT tokens",
 )
+@limiter.limit(auth_limit, exempt_when=limit_exempt_when_disabled)
 async def login(
+    request: Request,
     body: LoginRequest,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
