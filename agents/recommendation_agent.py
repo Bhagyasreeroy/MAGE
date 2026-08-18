@@ -268,14 +268,19 @@ class RecommendationAgent:
             return
 
         self._vector_store.initialize()
-        already_populated = self._vector_store.retrieve("eda methodology", top_k=1)
-        if not already_populated:
-            chunks = KnowledgeBaseLoader().load_all()
-            if chunks:
-                self._vector_store.add_documents(
-                    [c["text"] for c in chunks],
-                    metadata=[{**c["metadata"], "source": c["source"]} for c in chunks],
-                )
+        # Sync unconditionally rather than skipping when the store is
+        # non-empty. The old "is anything in here?" guard meant a knowledge
+        # base document added after the first ever run was never indexed —
+        # invisible, with no error. Sync is content-addressed (NFR-02), so an
+        # unchanged corpus costs one id lookup and embeds nothing.
+        chunks = KnowledgeBaseLoader().load_all()
+        if chunks:
+            added = self._vector_store.sync_documents(
+                [c["text"] for c in chunks],
+                metadata=[{**c["metadata"], "source": c["source"]} for c in chunks],
+            )
+            if added:
+                logger.info("Indexed %d new knowledge-base chunk(s).", added)
         self._kb_loaded = True
 
     @staticmethod
