@@ -156,6 +156,78 @@ class TestFindingLedRecommendations:
             assert not body[:1].islower(), f"starts mid-sentence: {body[:60]!r}"
 
 
+class TestReflectionAwareRecommendations:
+    """
+    The orchestrator's post-Mining reflection (OrchestratorAgent._reflect_on_
+    mining) hands decisions down via ``directives`` — this is the other half
+    of that contract: RecommendationAgent must actually act on them.
+    """
+
+    def test_target_quality_warning_leads_the_recommendations(self, agent: RecommendationAgent) -> None:
+        context = {
+            "goal": "Predict churn",
+            "MiningAgent_output": {
+                "patterns": ["'tenure' contributes most to predicting 'churned' (80% of total attribution)."],
+            },
+            "directives": {
+                "target_quality_warning": (
+                    "Target column 'churned' is only 40.0% complete (60 missing) — "
+                    "downstream modelling on it is unreliable until this is addressed."
+                ),
+            },
+        }
+        result = agent.run(context=context)
+
+        assert len(result["recommendations"]) > 0
+        first = result["recommendations"][0]
+        assert "churned" in first["text_technical"]
+        assert "40.0% complete" in first["text_technical"]
+
+    def test_untrusted_attribution_pattern_is_dropped(self, agent: RecommendationAgent) -> None:
+        context = {
+            "goal": "Predict churn",
+            "MiningAgent_output": {
+                "patterns": [
+                    "'tenure' contributes most to predicting 'churned' (80% of total attribution, "
+                    "via shap.TreeExplainer, model score 0.12).",
+                    "3 outlier(s) detected in 'revenue' via IQR (10.0% of rows).",
+                ],
+            },
+            "directives": {"attribution_trusted": False},
+        }
+        result = agent.run(context=context)
+
+        texts = [rec["text_technical"] for rec in result["recommendations"]]
+        assert not any("contributes most to predicting" in t for t in texts)
+        assert any("outlier(s) detected in 'revenue'" in t for t in texts)
+
+    def test_trusted_attribution_pattern_is_kept(self, agent: RecommendationAgent) -> None:
+        context = {
+            "goal": "Predict churn",
+            "MiningAgent_output": {
+                "patterns": [
+                    "'tenure' contributes most to predicting 'churned' (80% of total attribution, "
+                    "via shap.TreeExplainer, model score 0.91).",
+                ],
+            },
+            "directives": {"attribution_trusted": True},
+        }
+        result = agent.run(context=context)
+
+        texts = [rec["text_technical"] for rec in result["recommendations"]]
+        assert any("contributes most to predicting" in t for t in texts)
+
+    def test_no_directives_behaves_exactly_as_before(self, agent: RecommendationAgent) -> None:
+        context = {
+            "goal": "Find outliers in this dataset",
+            "MiningAgent_output": {
+                "patterns": ["3 outlier(s) detected in 'revenue' via IQR (10.0% of rows)."],
+            },
+        }
+        result = agent.run(context=context)
+        assert len(result["recommendations"]) > 0
+
+
 class TestLLMMode:
     """mode='llm' bypasses QAAgent and RAG entirely — no retrieval, no
     vector store touched, straight to the injected LLM client."""

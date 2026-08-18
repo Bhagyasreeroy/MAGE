@@ -578,6 +578,7 @@ class MiningAgent:
             return None
         try:
             from sklearn.cluster import DBSCAN
+            from sklearn.decomposition import PCA
             from sklearn.neighbors import NearestNeighbors
             from sklearn.preprocessing import StandardScaler
 
@@ -595,6 +596,16 @@ class MiningAgent:
             unique = set(labels)
             n_clusters = len(unique - {-1})
             n_noise = int((labels == -1).sum())
+
+            # Same 2D projection _compute_clustering uses, so the orchestrator
+            # can swap DBSCAN in as the presented clustering result (weak
+            # KMeans silhouette) without losing the ability to draw a scatter.
+            # -1 is DBSCAN's own noise label — kept as-is rather than remapped.
+            projection = PCA(n_components=2, random_state=42).fit_transform(scaled)
+            points = [
+                {"x": self._safe_float(x), "y": self._safe_float(y), "cluster": int(c)}
+                for (x, y), c in zip(projection[:MAX_SCATTER_POINTS], labels[:MAX_SCATTER_POINTS])
+            ]
         except Exception as exc:  # noqa: BLE001
             logger.warning("DBSCAN failed: %s", exc)
             return None
@@ -605,6 +616,7 @@ class MiningAgent:
             "n_noise": n_noise,
             "eps": round(eps, 3),
             "min_samples": int(min_samples),
+            "points": points,
         }
 
     # ── Class balance (classification goals) ─────────────────────────────

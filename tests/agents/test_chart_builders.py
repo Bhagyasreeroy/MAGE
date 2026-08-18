@@ -594,3 +594,111 @@ class TestColumnsWithNoDataAreNotCharted:
         result = agent.run(context={"dataframe": df, "goal": "profile", "MiningAgent_output": mining})
         boxed = [s["column"] for s in result["viz_specs"] if s["type"] == "boxplot"]
         assert "allnull" not in boxed
+
+
+class TestReflectionAwareCharts:
+    """
+    The orchestrator's post-Mining reflection (OrchestratorAgent._reflect_on_
+    mining) can hand these two builders a decision via ``directives`` — this
+    is the other half of that contract: the builders must actually act on it.
+    """
+
+    def _mining(self, **overrides) -> dict:
+        base = {"clustering": None, "dbscan": None, "feature_attribution": {}}
+        base.update(overrides)
+        return base
+
+    def test_cluster_scatter_prefers_dbscan_when_directed(self, agent) -> None:
+        mining = self._mining(
+            clustering={"k": 2, "silhouette_score": 0.15, "points": [{"x": 0.0, "y": 0.0, "cluster": 0}]},
+            dbscan={
+                "n_clusters": 2, "n_noise": 3,
+                "points": [{"x": 1.0, "y": 1.0, "cluster": 0}, {"x": 2.0, "y": 2.0, "cluster": 1}],
+            },
+        )
+        result = agent.run(
+            context={
+                "dataframe": pd.DataFrame({"a": [1, 2]}),
+                "goal": "cluster this",
+                "MiningAgent_output": mining,
+                "directives": {"charts": ["cluster_scatter"], "preferred_clustering": "dbscan"},
+            }
+        )
+        specs = _of_type(result["viz_specs"], "cluster_scatter")
+        assert len(specs) == 1
+        assert specs[0]["points"] == mining["dbscan"]["points"]
+        assert "DBSCAN" in specs[0]["title"]
+
+    def test_cluster_scatter_keeps_kmeans_with_a_caveat_when_dbscan_not_preferred(self, agent) -> None:
+        mining = self._mining(
+            clustering={"k": 2, "silhouette_score": 0.15, "points": [{"x": 0.0, "y": 0.0, "cluster": 0}]},
+        )
+        result = agent.run(
+            context={
+                "dataframe": pd.DataFrame({"a": [1, 2]}),
+                "goal": "cluster this",
+                "MiningAgent_output": mining,
+                "directives": {"charts": ["cluster_scatter"], "preferred_clustering": "kmeans"},
+            }
+        )
+        specs = _of_type(result["viz_specs"], "cluster_scatter")
+        assert len(specs) == 1
+        assert specs[0]["points"] == mining["clustering"]["points"]
+        assert "weak fit" in specs[0]["title"]
+
+    def test_cluster_scatter_unaffected_without_a_reflection_decision(self, agent) -> None:
+        """No `preferred_clustering` key at all — today's unmodified behaviour."""
+        mining = self._mining(
+            clustering={"k": 3, "silhouette_score": 0.6, "points": [{"x": 0.0, "y": 0.0, "cluster": 0}]},
+        )
+        result = agent.run(
+            context={
+                "dataframe": pd.DataFrame({"a": [1, 2]}),
+                "goal": "cluster this",
+                "MiningAgent_output": mining,
+                "directives": {"charts": ["cluster_scatter"]},
+            }
+        )
+        specs = _of_type(result["viz_specs"], "cluster_scatter")
+        assert len(specs) == 1
+        assert "weak fit" not in specs[0]["title"]
+        assert "DBSCAN" not in specs[0]["title"]
+
+    def test_feature_attribution_notes_low_confidence_when_distrusted(self, agent) -> None:
+        mining = self._mining(
+            feature_attribution={
+                "target": "churned", "method": "shap.TreeExplainer", "model_score": 0.12,
+                "attributions": [{"feature": "tenure", "score": 0.9}],
+            }
+        )
+        result = agent.run(
+            context={
+                "dataframe": pd.DataFrame({"a": [1, 2]}),
+                "goal": "classify churn",
+                "MiningAgent_output": mining,
+                "directives": {"charts": ["feature_attribution"], "attribution_trusted": False},
+            }
+        )
+        specs = _of_type(result["viz_specs"], "feature_importance")
+        assert len(specs) == 1
+        assert "low confidence" in specs[0]["title"]
+        assert "0.12" in specs[0]["title"]
+
+    def test_feature_attribution_unaffected_when_trusted(self, agent) -> None:
+        mining = self._mining(
+            feature_attribution={
+                "target": "churned", "method": "shap.TreeExplainer", "model_score": 0.9,
+                "attributions": [{"feature": "tenure", "score": 0.9}],
+            }
+        )
+        result = agent.run(
+            context={
+                "dataframe": pd.DataFrame({"a": [1, 2]}),
+                "goal": "classify churn",
+                "MiningAgent_output": mining,
+                "directives": {"charts": ["feature_attribution"], "attribution_trusted": True},
+            }
+        )
+        specs = _of_type(result["viz_specs"], "feature_importance")
+        assert len(specs) == 1
+        assert "low confidence" not in specs[0]["title"]

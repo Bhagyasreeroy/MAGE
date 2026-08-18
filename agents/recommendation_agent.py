@@ -379,8 +379,22 @@ class RecommendationAgent:
         seen_sources: set[str] = set()
 
         # 2a. One recommendation per concrete pattern MiningAgent found —
-        # led by the specific finding, not a generic chunk.
-        patterns = mining_dict.get("patterns") or []
+        # led by the specific finding, not a generic chunk. The orchestrator's
+        # post-Mining reflection (OrchestratorAgent._reflect_on_mining) can
+        # adjust this list before it's used: a target-completeness warning is
+        # prepended so it leads (patterns are processed in order, and this
+        # still grounds naturally via RAG, e.g. against missing_values.md),
+        # and the attribution pattern is dropped entirely when the fitted
+        # model scored too low to trust — already flagged in the ReAct log,
+        # so it should not also be presented as a top finding here.
+        directives = context.get("directives", {}) or {}
+        patterns = list(mining_dict.get("patterns") or [])
+        if directives.get("attribution_trusted") is False:
+            patterns = [p for p in patterns if "' contributes most to predicting" not in p]
+        target_quality_warning = directives.get("target_quality_warning")
+        if target_quality_warning:
+            patterns.insert(0, target_quality_warning)
+
         for pattern in patterns:
             if len(recommendations) >= MAX_RECOMMENDATIONS:
                 break
