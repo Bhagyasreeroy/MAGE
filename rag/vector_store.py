@@ -17,10 +17,10 @@ Responsibilities:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +33,15 @@ logger = logging.getLogger(__name__)
 DEFAULT_CHROMA_PATH = os.environ.get("CHROMA_DB_PATH", "./data/chroma_db")
 DEFAULT_FAISS_PATH = os.environ.get("FAISS_INDEX_PATH", "./data/faiss_index")
 COLLECTION_NAME = "mage_kb"
+
+
+def _first_wins(doc_id: str, seen: set[str]) -> bool:
+    """Guard against duplicates *within* one batch: chroma rejects a call that
+    repeats an id, and FAISS would happily store the chunk twice."""
+    if doc_id in seen:
+        return True
+    seen.add(doc_id)
+    return False
 
 
 class VectorStore:
@@ -68,6 +77,7 @@ class VectorStore:
         self._store: Any = None  # chroma Collection, or the FAISS index
         self._docs: list[str] = []  # FAISS-only: parallel document store
         self._metadatas: list[dict[str, Any]] = []  # FAISS-only
+        self._ids: list[str] = []  # FAISS-only: parallel content-hash ids
         logger.info("VectorStore created with backend=%s path=%s", self.backend, self.persist_path)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
@@ -100,12 +110,18 @@ class VectorStore:
                 payload = json.loads(docstore_file.read_text(encoding="utf-8"))
                 self._docs = payload["docs"]
                 self._metadatas = payload["metadatas"]
+                # Indexes written before ids existed carry none; derive them
+                # so an older on-disk index still de-duplicates correctly.
+                self._ids = payload.get("ids") or [
+                    self.document_id(d, m) for d, m in zip(self._docs, self._metadatas)
+                ]
                 logger.info("Loaded FAISS index with %d existing documents.", len(self._docs))
             else:
                 # Inner product over L2-normalized vectors == cosine similarity.
                 self._store = faiss.IndexFlatIP(EMBEDDING_DIM)
                 self._docs = []
                 self._metadatas = []
+                self._ids = []
                 logger.info("Created new FAISS IndexFlatIP(dim=%d).", EMBEDDING_DIM)
 
     # ── Documents ─────────────────────────────────────────────────────────
@@ -130,30 +146,152 @@ class VectorStore:
         if len(metadata) != len(documents):
             raise ValueError("metadata length must match documents length.")
 
-        embeddings = embed_batch(documents)
+        # Content-addressed ids make this operation idempotent (NFR-02). Skip
+        # anything already indexed *before* embedding: embedding is the
+        # expensive half, so filtering after it would still re-encode the whole
+        # corpus on every startup for no benefit.
+        ids = [self.document_id(t, m) for t, m in zip(documents, metadata)]
+        known = self.existing_ids(ids)
+
+        fresh = [
+            (i, t, m)
+            for i, t, m in zip(ids, documents, metadata)
+            if i not in known and not _first_wins(i, known)
+        ]
+        if not fresh:
+            logger.info("No new documents to index — all %d already present.", len(documents))
+            return
+
+        new_ids = [f[0] for f in fresh]
+        new_docs = [f[1] for f in fresh]
+        new_meta = [f[2] for f in fresh]
+        embeddings = embed_batch(new_docs)
 
         if self.backend == "chroma":
-            ids = [str(uuid.uuid4()) for _ in documents]
             # Chroma metadata values must be str/int/float/bool — coerce, and
             # never pass an empty dict (chroma rejects metadata with no keys).
             safe_metadata = [
                 {k: v for k, v in m.items() if v is not None and v != ""} or {"source": "unknown"}
-                for m in metadata
+                for m in new_meta
             ]
-            self._store.add(
-                ids=ids,
+            # upsert, not add: a re-run with identical ids must not raise and
+            # must not duplicate.
+            self._store.upsert(
+                ids=new_ids,
                 embeddings=embeddings.tolist(),
-                documents=documents,
+                documents=new_docs,
                 metadatas=safe_metadata,
             )
         else:
             normalized = self._normalize(embeddings)
             self._store.add(normalized)
-            self._docs.extend(documents)
-            self._metadatas.extend(metadata)
+            self._docs.extend(new_docs)
+            self._metadatas.extend(new_meta)
+            self._ids.extend(new_ids)
             self._persist_faiss()
 
-        logger.info("Added %d document(s) to the %s vector store.", len(documents), self.backend)
+        logger.info(
+            "Indexed %d new document(s) into the %s vector store (%d already present).",
+            len(new_docs), self.backend, len(documents) - len(new_docs),
+        )
+
+    # ── Identity and incremental indexing (NFR-02) ────────────────────────
+
+    @staticmethod
+    def document_id(text: str, metadata: dict[str, Any] | None = None) -> str:
+        """
+        Stable content-addressed id for one chunk.
+
+        Identity is (source, text). Source is part of it because two knowledge
+        base documents may legitimately quote the same sentence, and each still
+        needs to be citable in its own right — collapsing them would silently
+        drop one document's claim to the finding.
+
+        Because the id is derived rather than random, re-indexing an unchanged
+        corpus is a no-op and a changed chunk is a new document.
+        """
+        source = str((metadata or {}).get("source", ""))
+        digest = hashlib.sha256(f"{source}\x00{text}".encode("utf-8")).hexdigest()
+        return digest[:32]
+
+    def existing_ids(self, ids: list[str]) -> set[str]:
+        """Which of `ids` the store already holds."""
+        if not ids:
+            return set()
+        if self._store is None:
+            self.initialize()
+        if self.backend == "chroma":
+            try:
+                found = self._store.get(ids=ids, include=[])
+                return set(found.get("ids") or [])
+            except Exception as exc:  # noqa: BLE001 - treat as "nothing known"
+                logger.warning("Could not read existing ids from chroma: %s", exc)
+                return set()
+        return set(self._ids) & set(ids)
+
+    def count(self) -> int:
+        """Number of documents currently indexed."""
+        if self._store is None:
+            self.initialize()
+        if self.backend == "chroma":
+            try:
+                return int(self._store.count())
+            except Exception:  # noqa: BLE001
+                return 0
+        return len(self._docs)
+
+    def migrate_legacy_ids(self) -> int:
+        """
+        Re-key rows that predate content-addressed ids, returning how many.
+
+        Before NFR-02 every row was keyed by a fresh ``uuid4``. Such an id can
+        never equal a derived one, so the first sync after the change would
+        re-add the whole corpus and every retrieval would return each
+        methodology twice. Rather than requiring anyone to rebuild their index
+        by hand, drop the mis-keyed rows here and let the normal sync re-insert
+        them under the right id.
+
+        Chroma only: FAISS ids are derived on load from the persisted docstore,
+        so that backend has nothing to migrate.
+        """
+        if self.backend != "chroma":
+            return 0
+        if self._store is None:
+            self.initialize()
+        try:
+            stored = self._store.get(include=["documents", "metadatas"])
+        except Exception as exc:  # noqa: BLE001 - a store we cannot read is left alone
+            logger.warning("Could not inspect the store for legacy ids: %s", exc)
+            return 0
+
+        stale = [
+            stored_id
+            for stored_id, text, meta in zip(
+                stored.get("ids") or [], stored.get("documents") or [], stored.get("metadatas") or []
+            )
+            if stored_id != self.document_id(text, meta or {})
+        ]
+        if stale:
+            self._store.delete(ids=stale)
+            logger.info("Migrated %d legacy vector-store row(s) to content-addressed ids.", len(stale))
+        return len(stale)
+
+    def sync_documents(
+        self, documents: list[str], metadata: list[dict[str, Any]] | None = None
+    ) -> int:
+        """
+        Index whatever is missing and report how many that was.
+
+        The agent-facing entry point for NFR-02. Callers previously guarded on
+        *"is the store non-empty"*, which meant a knowledge-base document added
+        after the first run was never indexed at all. Calling this
+        unconditionally is correct and cheap: unchanged corpora cost one id
+        lookup and no embedding.
+        """
+        self.migrate_legacy_ids()
+        before = self.count()
+        self.add_documents(documents, metadata)
+        return max(0, self.count() - before)
 
     # ── Retrieval ─────────────────────────────────────────────────────────
 
@@ -230,6 +368,6 @@ class VectorStore:
         Path(self.persist_path).mkdir(parents=True, exist_ok=True)
         faiss.write_index(self._store, str(Path(self.persist_path) / "index.faiss"))
         (Path(self.persist_path) / "docstore.json").write_text(
-            json.dumps({"docs": self._docs, "metadatas": self._metadatas}),
+            json.dumps({"docs": self._docs, "metadatas": self._metadatas, "ids": self._ids}),
             encoding="utf-8",
         )
