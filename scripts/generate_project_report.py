@@ -443,7 +443,7 @@ def build():
     # ── 10. Testing ─────────────────────────────────────────────────────────
     story += [
         h1("11. Testing & Verification"),
-        p("The system is covered by an automated test suite of <b>669 tests</b> spanning the agents, the RAG "
+        p("The system is covered by an automated test suite of <b>746 tests</b> spanning the agents, the RAG "
           "layer, the backend services, and the evaluation harness. Coverage includes:"),
         bullets([
             "Ingestion — every file format plus PDF, database, and REST sources, and the source-type router.",
