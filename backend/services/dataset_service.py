@@ -12,12 +12,14 @@ from __future__ import annotations
 import io
 import logging
 import uuid
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.models.analysis_run import AnalysisRun
 from backend.models.dataset import Dataset
 
 logger = logging.getLogger(__name__)
@@ -139,3 +141,41 @@ def as_stored_file(dataset: Dataset) -> StoredFile:
     """Wrap a Dataset row's bytes so it can flow through DataIngestionEngine
     exactly like an UploadFile would."""
     return StoredFile(filename=dataset.filename, file=io.BytesIO(dataset.content))
+
+
+async def purge_expired_datasets(db: AsyncSession, user_id: str) -> int:
+    """
+    Delete this user's expired datasets, returning how many went (NFR-04).
+
+    Two guards, both load-bearing:
+
+    * **Scoped to one user.** Retention is not a licence to touch other
+      people's rows, and the sweep runs on a user-triggered request.
+    * **Never collects a dataset a completed run depends on.** The FK from
+      ``analysis_runs`` is ``ON DELETE SET NULL``, so deleting one would *not*
+      raise — it would quietly detach the run from its data and break a report
+      the user already generated. Silently damaging an existing artefact is
+      worse than keeping a file past its date, so referenced datasets are
+      retained regardless of age.
+
+    Rows with a NULL ``expires_at`` are never collected: that covers datasets
+    created before retention existed, which should not vanish the moment the
+    feature ships.
+    """
+    referenced = select(AnalysisRun.dataset_id).where(AnalysisRun.dataset_id.is_not(None))
+
+    result = await db.execute(
+        select(Dataset).where(
+            Dataset.user_id == user_id,
+            Dataset.expires_at.is_not(None),
+            Dataset.expires_at < datetime.now(timezone.utc),
+            Dataset.id.not_in(referenced),
+        )
+    )
+    stale = list(result.scalars().all())
+    for dataset in stale:
+        await db.delete(dataset)
+    if stale:
+        await db.commit()
+        logger.info("Purged %d expired dataset(s) for user %s.", len(stale), user_id)
+    return len(stale)

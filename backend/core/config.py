@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     backend_port: int = 8000
 
     # ── API Keys ───────────────────────────────────────────────────────────
+    # ── Data retention (NFR-04) ───────────────────────────────────────────
+    # Uploaded files live in Postgres as bytes, so "keep forever" is a real
+    # cost as well as a privacy problem. Deliberately generous: a sweep that is
+    # too eager is indistinguishable from data loss, and a dataset referenced by
+    # a completed run is never collected regardless of age.
+    dataset_retention_days: int = 30
+
     # ── Rate limiting (M8) ────────────────────────────────────────────────
     # Windows are per key, and the key is the authenticated user where there is
     # one (see core/rate_limit.py) — not the host, which would put a whole lab
