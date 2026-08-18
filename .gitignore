@@ -88,3 +88,6 @@ MAGE_Project_Report.pdf
 evaluation/_data/
 
 
+
+# Browser walkthrough screenshots (evidence, not source)
+.browser-check/

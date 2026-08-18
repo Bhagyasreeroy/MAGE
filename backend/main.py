@@ -71,6 +71,15 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # allow_headers governs *request* headers; a browser cannot read a
+    # *response* header cross-origin unless it is exposed explicitly. The
+    # frontend (:3000) reads Content-Disposition off the export responses
+    # (:8000) to name the downloaded file, so without this every export saves
+    # as "download" — and the BibTeX bundle lands with no extension at all,
+    # since Chrome can only guess one from the MIME type and does not know
+    # application/x-bibtex. The server was always sending the right filename;
+    # it just never reached JavaScript.
+    expose_headers=["Content-Disposition"],
 )
 
 # ── Routers ───────────────────────────────────────────────────────────────────

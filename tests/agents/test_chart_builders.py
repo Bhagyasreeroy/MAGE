@@ -484,3 +484,64 @@ class TestDefaultProfileUnchanged:
             mining = _mining(labelled_df, task, target="churned")
             specs = _viz(agent, labelled_df, mining, charts)
             assert specs, f"{task.value} produced no charts at all"
+
+
+# ── Default categorical bars (found by the browser walkthrough) ──────────────
+
+
+class TestCategoricalBarsSkipNonGroupableColumns:
+    """
+    `_categorical_bar_specs` is the *default* bar builder, and it also backs the
+    `grouped_bar` directive when no target exists — which is every reporting
+    run. It picked columns purely in dataset order, so on an uploaded CSV it
+    chose the text date column and drew "Top values in 'order_date'": five
+    unique timestamps, each with a count of 1. A meaningless chart, in the most
+    common goal's default view.
+
+    Same root cause as the grouped_bar fix above (CSV dates are typed
+    *categorical* by the profiler) but in the older builder, which had no guard.
+    """
+
+    def test_timestamp_column_is_not_barred(self, agent) -> None:
+        rng = np.random.default_rng(31)
+        n = 200
+        df = pd.DataFrame(
+            {
+                "order_date": pd.date_range("2026-01-01", periods=n, freq="h").strftime("%Y-%m-%d %H:%M"),
+                "region": rng.choice(["East", "West", "North"], size=n),
+                "spend": rng.normal(100, 12, size=n).round(2),
+            }
+        )
+        mining = MiningAgent().run(context={"dataframe": df, "goal": "profile"})
+        result = agent.run(context={"dataframe": df, "goal": "profile", "MiningAgent_output": mining})
+        barred = [s["title"] for s in result["viz_specs"] if s["type"] == "bar"]
+        assert not any("order_date" in t for t in barred), f"charted the time axis: {barred}"
+        assert any("region" in t for t in barred), "should still bar the real categorical"
+
+    def test_per_row_identifier_is_not_barred(self, agent) -> None:
+        n = 60
+        df = pd.DataFrame(
+            {
+                "ticket": [f"T-{i:04d}" for i in range(n)],  # unique per row
+                "status": ["open", "closed", "pending"] * 20,
+                "amount": np.linspace(1, 60, n).round(2),
+            }
+        )
+        mining = MiningAgent().run(context={"dataframe": df, "goal": "profile"})
+        result = agent.run(context={"dataframe": df, "goal": "profile", "MiningAgent_output": mining})
+        barred = [s["title"] for s in result["viz_specs"] if s["type"] == "bar"]
+        assert not any("ticket" in t for t in barred), f"charted a per-row id: {barred}"
+        assert any("status" in t for t in barred)
+
+    def test_a_frame_of_only_ungroupable_columns_yields_no_bars(self, agent) -> None:
+        """Better no bar chart than a meaningless one."""
+        n = 40
+        df = pd.DataFrame(
+            {
+                "uid": [f"u{i}" for i in range(n)],
+                "value": np.linspace(0, 39, n).round(2),
+            }
+        )
+        mining = MiningAgent().run(context={"dataframe": df, "goal": "profile"})
+        result = agent.run(context={"dataframe": df, "goal": "profile", "MiningAgent_output": mining})
+        assert not [s for s in result["viz_specs"] if s["type"] == "bar"]
