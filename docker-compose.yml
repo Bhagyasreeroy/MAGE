@@ -26,6 +26,12 @@ services:
     environment:
       - ENVIRONMENT=${ENVIRONMENT:-development}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Gemini drives the opt-in LLM features (chat LLM mode, "Explain
+      # further", ask-in-English -> SQL). Without it forwarded, all three
+      # silently fall back to the deterministic RAG path *inside the
+      # container only* — they work when run from the host and quietly do not
+      # in Docker, which is the worst way to discover it on demo day.
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - VECTOR_STORE_BACKEND=${VECTOR_STORE_BACKEND:-chroma}
