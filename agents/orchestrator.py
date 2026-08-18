@@ -37,7 +37,16 @@ from backend.schemas.analysis import GoalClassification, TaskType
 
 logger = logging.getLogger(__name__)
 
-# Maximum number of ReAct iterations before the loop halts (runaway guard).
+# Upper bound on ReAct iterations.
+#
+# Describe this accurately: it is a working bound that the *current* planner
+# cannot reach, not an active safety guard. PipelinePlanner emits exactly four
+# steps for every task type, so the check below has never fired in production
+# and cannot until the plan becomes variable-length — which is what a
+# model-driven loop would make it. The bound is kept rather than deleted
+# because it is the thing that makes such a loop safe to introduce, and
+# tests/agents/test_react_step_cap.py proves it truncates a runaway plan and
+# logs when it does. Do not present it as evidence of a guarded ReAct loop.
 MAX_REACT_STEPS = 10
 
 # FR-04 — which recommendation register each expertise level reads.
