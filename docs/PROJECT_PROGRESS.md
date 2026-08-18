@@ -74,7 +74,7 @@ The **happy path works end-to-end**: upload CSV → goal classified → mined �
 - [x] ✅ Opt-in LLM mode in follow-up chat; RAG-grounded "Explain further" — `agents/explain_agent.py`
 - [x] ✅ Ask-in-English → SQL in the dataset workbench — `backend/services/transform_service.py`
 - [x] ✅ Degrades to the deterministic RAG path when `GEMINI_API_KEY` is unset (guarded on `is_configured`)
-- [ ] ❌ **NFR-03 retry / exponential backoff** — the client raises `LLMError` and stops
+- [x] ✅ **NFR-03 retry / exponential backoff** — 3 attempts with jitter; 4xx fails fast *(done 2026-08-18)*
 
 ### M5 — RAG Pipeline
 - [x] ✅ Local sentence-transformers embeddings (`all-MiniLM-L6-v2`, 384-dim) — `rag/embeddings.py`
@@ -82,8 +82,8 @@ The **happy path works end-to-end**: upload CSV → goal classified → mined �
 - [x] ✅ Knowledge-base loader + corpus (5 methodology docs) — `rag/knowledge_loader.py`, `data/knowledge_base/`
 - [x] ✅ Top-k semantic retrieval wired into recommendations
 - [ ] 🟡 **Knowledge base is small (5 docs)** — expand curated corpus for stronger grounding
-- [ ] ❌ **Run-memory store** (prior-run retrieval — "improves with use") — *docs `run_memory` table, not implemented*
-- [ ] ❌ **Incremental indexing across sessions** (NFR-02) — *verify/implement*
+- [x] ✅ **Run-memory store** *(done 2026-08-12)*
+- [x] ✅ **Incremental indexing across sessions** (NFR-02) — content-addressed ids *(done 2026-08-18)*
 
 ### M6 — Recommendation & Explainability
 - [x] ✅ RAG-grounded recommendations with source citation — `agents/recommendation_agent.py`
@@ -110,8 +110,8 @@ The **happy path works end-to-end**: upload CSV → goal classified → mined �
 - [x] ✅ Export service: PDF report, JSON, BibTeX citation bundle — `backend/services/export_service.py`
 - [ ] ❌ **WebSocket endpoint** for live agent updates — *absent*
 - [ ] ❌ **Celery + Redis job queue** (async analysis) — *absent; runs synchronously*
-- [ ] ❌ **Rate limiting** — *docs, verify/absent*
-- [ ] ❌ **Session-scoped file sandboxing + delete-on-session-end** (NFR-04) — *verify current retention behavior*
+- [x] ✅ **Rate limiting** — slowapi, per-user keyed *(done 2026-08-18)*
+- [x] ✅ **Session-scoped retention** — `expires_at` + guarded purge sweep *(done 2026-08-18)*
 
 ---
 
@@ -126,9 +126,9 @@ The **happy path works end-to-end**: upload CSV → goal classified → mined �
 | FR-05 | End-to-end < 60s for <100k rows | 🟡 likely OK (local, no LLM) — **not benchmarked** |
 | FR-06 | Every agent step logged/inspectable | ✅ |
 | NFR-01 | Horizontal scaling via containerization | 🟡 Docker yes; K8s stretch |
-| NFR-02 | Incremental vector indexing (no full rebuild) | ❌ verify |
-| NFR-03 | LLM API retry w/ exponential backoff | ❌ n/a until LLM wired |
-| NFR-04 | Files sandboxed + deleted post-session | ❌ verify |
+| NFR-02 | Incremental vector indexing (no full rebuild) | ✅ **content-addressed ids (18 Aug)** |
+| NFR-03 | LLM API retry w/ exponential backoff | ✅ **3 attempts, jittered, bounded (18 Aug)** |
+| NFR-04 | Files sandboxed + deleted post-session | ✅ **TTL + guarded sweep (18 Aug)** |
 
 ---
 
@@ -148,7 +148,7 @@ The **happy path works end-to-end**: upload CSV → goal classified → mined �
   unchanged, which is what keeps output reproducible and keeps the system working with no key.
 - Citation integrity holds: retrieval runs first, the model synthesises on top, and the UI badges
   which path produced each answer.
-- **Still open:** NFR-03 retry/backoff.
+- ~~**Still open:** NFR-03 retry/backoff.~~ **Closed 18 Aug.**
 
 ### C. ❌ No live/async execution layer
 - `run_analysis` awaits the orchestrator **synchronously**; response returns only when the whole pipeline finishes.
