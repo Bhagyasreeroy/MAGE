@@ -289,20 +289,32 @@ export function Pairplot({
   return (
     <div className="grid grid-cols-2 gap-3 w-full min-w-0">
       {pairs.map((pair, i) => {
+        // Scale to the 2nd-98th percentile, not min-max. A handful of extreme
+        // values (exactly what a planted outlier looks like) otherwise own the
+        // whole axis and squash every real point onto a single line — the
+        // panel renders, and shows nothing. Out-of-range points are clamped to
+        // the edge rather than dropped, so the panel never lies about how many
+        // observations there are. Same reasoning as the Tukey scaling in
+        // BoxPlot above.
+        const pct = (arr: number[], q: number) => {
+          const a = [...arr].sort((m, n) => m - n);
+          return a[Math.min(a.length - 1, Math.max(0, Math.floor(q * (a.length - 1))))];
+        };
         const xs = pair.points.map((p) => p.x);
         const ys = pair.points.map((p) => p.y);
-        const minX = Math.min(...xs);
-        const minY = Math.min(...ys);
-        const rangeX = Math.max(...xs) - minX || 1;
-        const rangeY = Math.max(...ys) - minY || 1;
+        const minX = pct(xs, 0.02);
+        const minY = pct(ys, 0.02);
+        const rangeX = pct(xs, 0.98) - minX || 1;
+        const rangeY = pct(ys, 0.98) - minY || 1;
+        const clamp = (v: number) => Math.min(1, Math.max(0, v));
         return (
           <div key={i} className="min-w-0">
             <svg viewBox="0 0 100 100" className="w-full h-28 bg-cream/40 rounded-lg">
               {pair.points.map((p, j) => (
                 <circle
                   key={j}
-                  cx={((p.x - minX) / rangeX) * 90 + 5}
-                  cy={90 - ((p.y - minY) / rangeY) * 90 + 5}
+                  cx={clamp((p.x - minX) / rangeX) * 90 + 5}
+                  cy={90 - clamp((p.y - minY) / rangeY) * 90 + 5}
                   r="1.6"
                   fill={SERIES_COLORS[i % SERIES_COLORS.length]}
                   opacity="0.65"

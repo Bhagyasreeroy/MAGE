@@ -66,6 +66,8 @@ MAX_SCATTER_POINTS = 500
 MAX_GROUPED_BAR_CATEGORIES = 8
 # Above this many distinct values a column is a label, not a grouping.
 MAX_GROUPED_BAR_DISTINCT = 25
+# Above this share of distinct values, counting occurrences says nothing.
+MAX_CATEGORY_DISTINCT_RATIO = 0.5
 MAX_CLASS_SERIES = 5
 MIN_ROWS_PER_CLASS = 3
 MAX_PAIRPLOT_COLUMNS = 4
@@ -142,7 +144,7 @@ class VisualizationAgent:
                 specs.append(spec)
         specs.extend(self._histogram_specs(df, mining, goal))
         specs.extend(self._boxplot_specs(mining))
-        specs.extend(self._categorical_bar_specs(mining))
+        specs.extend(self._categorical_bar_specs(mining, df))
         return specs
 
     def _resolve_target(self, mining: dict[str, Any], directives: dict[str, Any]) -> str | None:
@@ -209,9 +211,9 @@ class VisualizationAgent:
                 built = self._boxplot_specs(mining) or self._boxplot_specs(mining, force_numeric=True)
             elif chart == "grouped_bar":
                 spec = self._grouped_bar_spec(df, mining, target)
-                built = [spec] if spec else self._categorical_bar_specs(mining)
+                built = [spec] if spec else self._categorical_bar_specs(mining, df)
             elif chart == "bar":
-                built = self._categorical_bar_specs(mining)
+                built = self._categorical_bar_specs(mining, df)
             elif chart == "violin":
                 spec = self._violin_spec(df, mining)
                 built = [spec] if spec else []
@@ -366,9 +368,39 @@ class VisualizationAgent:
             )
         return specs
 
-    def _categorical_bar_specs(self, mining: dict[str, Any]) -> list[dict[str, Any]]:
+    def _categorical_bar_specs(
+        self, mining: dict[str, Any], df: pd.DataFrame | None = None
+    ) -> list[dict[str, Any]]:
+        """
+        Frequency bars for the genuinely categorical columns.
+
+        Selection skips the time axis and near-unique columns. Found in the
+        browser: an uploaded CSV leaves dates as text, the profiler types them
+        *categorical*, and this builder charted "Top values in 'order_date'" —
+        five unique timestamps, each with a count of 1 — in the default
+        reporting view. Counting occurrences only says something when values
+        actually repeat, so a column whose values are nearly all distinct is
+        not a bar chart, and no chart beats a meaningless one.
+        """
         statistics = mining.get("statistics") or {}
-        categorical_cols = [c for c, s in statistics.items() if s.get("type") == "categorical"]
+        time_col = None
+        if df is not None:
+            found = self._datetime_series(df)
+            time_col = found[0] if found else None
+
+        categorical_cols = []
+        for col, stat in statistics.items():
+            if stat.get("type") != "categorical" or col == time_col:
+                continue
+            if df is not None and col in df.columns:
+                non_null = df[col].dropna()
+                distinct = non_null.nunique()
+                if distinct > MAX_GROUPED_BAR_DISTINCT or (
+                    len(non_null) and distinct / len(non_null) > MAX_CATEGORY_DISTINCT_RATIO
+                ):
+                    continue
+            categorical_cols.append(col)
+
         specs: list[dict[str, Any]] = []
         for col in categorical_cols[:MAX_CATEGORICAL_BARS]:
             top_values = statistics[col].get("top_values", [])
