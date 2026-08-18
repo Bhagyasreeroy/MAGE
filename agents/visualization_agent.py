@@ -352,6 +352,13 @@ class VisualizationAgent:
             stat = statistics.get(col, {})
             if not stat:
                 continue
+            # A column that is entirely null is still typed *numeric*, with every
+            # statistic None. Boxing it renders a card headed "Distribution of
+            # 'x'" containing the words "Not enough data for a box plot" — wasted
+            # space that displaces a chart with something to say. Missingness has
+            # its own chart; this one needs an actual distribution.
+            if stat.get("median") is None or stat.get("q1") is None or stat.get("q3") is None:
+                continue
             flagged = col in outliers
             specs.append(
                 {
