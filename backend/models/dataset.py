@@ -19,12 +19,19 @@ its audit-trail entry, so there's no separate transform-log table.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import JSON, DateTime, ForeignKey, LargeBinary, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.database import Base
+
+
+def _retention_days() -> int:
+    """Read at row-creation time so the TTL stays configurable per deployment."""
+    from backend.core.config import settings
+
+    return int(getattr(settings, "dataset_retention_days", 30))
 
 
 class Dataset(Base):
@@ -52,6 +59,15 @@ class Dataset(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
+    )
+    # NFR-04 — uploaded bytes are not kept forever. Nullable so that rows
+    # predating retention (and any row a future feature wants to pin) are simply
+    # never collected, rather than being swept the moment the feature ships.
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc) + timedelta(days=_retention_days()),
+        nullable=True,
+        index=True,
     )
 
     # ── Version lineage ──────────────────────────────────────────────────

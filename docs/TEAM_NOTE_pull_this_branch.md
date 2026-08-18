@@ -76,12 +76,28 @@ COMMIT;
 SQL
 ```
 
+### A second migration (NFR-04 retention)
+
+Retention adds one more column. Same reason `create_all` will not do it for you:
+
+```bash
+docker exec -i mage-postgres psql -U mage -d mage <<'SQL'
+ALTER TABLE datasets ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS ix_datasets_expires_at ON datasets(expires_at);
+SQL
+```
+
+Existing rows get `NULL`, and **a NULL expiry is never collected** — so nothing
+you already have can be swept by this change. Only datasets uploaded *after* the
+migration carry a date (default 30 days, `DATASET_RETENTION_DAYS`), and a dataset
+referenced by a completed analysis run is retained regardless of age.
+
 ---
 
-## 2. New Python dependency
+## 2. New Python dependencies
 
-`duckdb` (the workbench SQL console). It is in `backend/pyproject.toml`, but your
-local venv will not have it:
+`duckdb` (the workbench SQL console) and `slowapi` (M8 rate limiting). Both are in
+`backend/pyproject.toml`, but your local venv will not have them:
 
 ```bash
 pip install -e "backend/[dev]"     # or: pip install duckdb

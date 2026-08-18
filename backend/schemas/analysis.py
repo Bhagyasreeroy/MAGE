@@ -264,6 +264,10 @@ class DatasetSummary(BaseModel):
     row_count: int | None
     column_count: int | None
     created_at: datetime
+    expires_at: datetime | None = Field(
+        default=None,
+        description="When retention collects this dataset (NFR-04). Null means never.",
+    )
     root_id: str = Field(default="", description="Lineage root id — shared by every version of this dataset.")
     parent_id: str | None = Field(default=None, description="The version this one was transformed from, if any.")
     version: int = Field(default=1, description="1 for an original upload; increments per transform.")
@@ -283,6 +287,12 @@ class DatasetDetail(DatasetSummary):
         default=None,
         description="Human-readable summary of what changed — only present on a freshly-created version.",
     )
+
+
+class PurgeResult(BaseModel):
+    """Outcome of a retention sweep (NFR-04)."""
+
+    purged: int = Field(..., description="How many expired datasets were deleted.")
 
 
 class DatasetPreview(BaseModel):

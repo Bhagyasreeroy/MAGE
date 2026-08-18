@@ -73,6 +73,7 @@ from backend.schemas.analysis import (
     DatasetDetail,
     DatasetPreview,
     DatasetSummary,
+    PurgeResult,
     ExpertiseLevel,
     ExplainRequest,
     ExplainResult,
@@ -612,6 +613,7 @@ def _to_summary(d) -> DatasetSummary:
         row_count=d.row_count,
         column_count=d.column_count,
         created_at=d.created_at,
+        expires_at=getattr(d, "expires_at", None),
         root_id=d.root_id,
         parent_id=d.parent_id,
         version=d.version,
@@ -631,6 +633,25 @@ async def list_datasets(
 ) -> list[DatasetSummary]:
     datasets = await dataset_service.list_datasets(db, current_user.id)
     return [_to_summary(d) for d in datasets]
+
+
+@router.post(
+    "/datasets/purge-expired",
+    response_model=PurgeResult,
+    status_code=status.HTTP_200_OK,
+    summary="Delete the current user's expired datasets (NFR-04)",
+)
+async def purge_expired(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PurgeResult:
+    """Collect this user's datasets that are past their retention date.
+
+    Never touches a dataset a completed run still references — the FK is
+    ON DELETE SET NULL, so removing one would silently detach the run from its
+    data and break a report the user already has."""
+    purged = await dataset_service.purge_expired_datasets(db, current_user.id)
+    return PurgeResult(purged=purged)
 
 
 @router.delete(
