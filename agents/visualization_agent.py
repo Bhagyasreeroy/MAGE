@@ -120,14 +120,14 @@ class VisualizationAgent:
         # run is never left with no visualisation at all.
         if charts:
             target = self._resolve_target(mining, directives)
-            specs = self._conditioned_specs(charts, df, mining, goal, target)
+            specs = self._conditioned_specs(charts, df, mining, goal, target, directives)
             if specs:
                 return {
                     "viz_specs": specs,
                     "message": f"Selected {len(specs)} goal-conditioned chart(s) for {charts}.",
                 }
 
-        specs = self._default_specs(df, mining, goal)
+        specs = self._default_specs(df, mining, goal, directives)
         return {
             "viz_specs": specs,
             "message": f"Selected {len(specs)} chart(s) for this goal.",
@@ -135,10 +135,12 @@ class VisualizationAgent:
 
     # ── Chart-set assembly ───────────────────────────────────────────────────
 
-    def _default_specs(self, df: pd.DataFrame, mining: dict[str, Any], goal: str) -> list[dict[str, Any]]:
+    def _default_specs(
+        self, df: pd.DataFrame, mining: dict[str, Any], goal: str, directives: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """The full unconditioned chart set (standalone / reporting default)."""
         specs: list[dict[str, Any]] = []
-        for spec in (self._heatmap_spec(mining), self._cluster_scatter_spec(mining),
+        for spec in (self._heatmap_spec(mining), self._cluster_scatter_spec(mining, directives),
                      self._feature_importance_spec(mining)):
             if spec:
                 specs.append(spec)
@@ -171,6 +173,7 @@ class VisualizationAgent:
         mining: dict[str, Any],
         goal: str,
         target: str | None = None,
+        directives: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """
         Build the specific chart types named in the planner's directive.
@@ -188,10 +191,10 @@ class VisualizationAgent:
                 spec = self._heatmap_spec(mining)
                 built = [spec] if spec else []
             elif chart in ("cluster_scatter",):
-                spec = self._cluster_scatter_spec(mining)
+                spec = self._cluster_scatter_spec(mining, directives)
                 built = [spec] if spec else []
             elif chart == "pairplot":
-                spec = self._pairplot_spec(df, mining) or self._cluster_scatter_spec(mining)
+                spec = self._pairplot_spec(df, mining) or self._cluster_scatter_spec(mining, directives)
                 built = [spec] if spec else []
             elif chart == "highlighted_scatter":
                 spec = self._highlighted_scatter_spec(df, mining) or self._scatter_spec(df, mining)
@@ -229,7 +232,7 @@ class VisualizationAgent:
             elif chart in ("feature_attribution", "shap"):
                 # Falls back to the PCA ranking when attribution did not run
                 # (no usable target), so the slot is never left empty.
-                spec = self._feature_attribution_spec(mining) or self._feature_importance_spec(mining)
+                spec = self._feature_attribution_spec(mining, directives) or self._feature_importance_spec(mining)
                 built = [spec] if spec else []
 
             for spec in built:
@@ -255,13 +258,38 @@ class VisualizationAgent:
             "matrix": [[correlations[c].get(o) for o in cols] for c in cols],
         }
 
-    def _cluster_scatter_spec(self, mining: dict[str, Any]) -> dict[str, Any] | None:
+    def _cluster_scatter_spec(
+        self, mining: dict[str, Any], directives: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """
+        Cluster scatter, defaulting to KMeans — unless the orchestrator's
+        post-Mining reflection judged KMeans's silhouette too weak to trust
+        (see OrchestratorAgent._reflect_on_mining), in which case it prefers
+        DBSCAN, which MAGE already computes unconditionally for every
+        clustering goal.
+        """
+        directives = directives or {}
+        preference = directives.get("preferred_clustering")
+
+        if preference == "dbscan":
+            dbscan = mining.get("dbscan")
+            if dbscan and dbscan.get("points"):
+                return {
+                    "type": "cluster_scatter",
+                    "title": (
+                        f"Clustering (DBSCAN, {dbscan['n_clusters']} cluster(s), "
+                        f"{dbscan['n_noise']} noise point(s) — KMeans silhouette was weak)"
+                    ),
+                    "points": dbscan["points"],
+                }
+
         clustering = mining.get("clustering")
         if not clustering:
             return None
+        weak_note = " — weak fit" if preference == "kmeans" else ""
         return {
             "type": "cluster_scatter",
-            "title": f"Clustering (k={clustering['k']}, silhouette={clustering['silhouette_score']})",
+            "title": f"Clustering (k={clustering['k']}, silhouette={clustering['silhouette_score']}{weak_note})",
             "points": clustering["points"],
         }
 
@@ -275,7 +303,9 @@ class VisualizationAgent:
             "items": [{"label": f["feature"], "value": f["score"]} for f in feature_importance],
         }
 
-    def _feature_attribution_spec(self, mining: dict[str, Any]) -> dict[str, Any] | None:
+    def _feature_attribution_spec(
+        self, mining: dict[str, Any], directives: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         """
         Bar chart of supervised feature attribution (SHAP).
 
@@ -283,16 +313,28 @@ class VisualizationAgent:
         exporter both already draw it — but carries a distinct title naming the
         target and the method, so it is never mistaken for the unsupervised
         PCA ranking sitting next to it in the same report.
+
+        Title names the fitted model's score too when the orchestrator's
+        reflection judged it too low to trust (see
+        OrchestratorAgent._reflect_on_mining) — the chart still renders (this
+        is additive evidence, not a reason to hide the finding), but a reader
+        should not mistake it for a confident ranking.
         """
+        directives = directives or {}
         attribution = mining.get("feature_attribution") or {}
         items = attribution.get("attributions") or []
         if not items:
             return None
         method = attribution.get("method", "attribution")
         target = attribution.get("target", "target")
+        trust_note = (
+            f" — low confidence (model score {attribution.get('model_score')})"
+            if directives.get("attribution_trusted") is False
+            else ""
+        )
         return {
             "type": "feature_importance",
-            "title": f"Feature Attribution for '{target}' ({method})",
+            "title": f"Feature Attribution for '{target}' ({method}){trust_note}",
             "items": [{"label": f["feature"], "value": f["score"]} for f in items],
         }
 

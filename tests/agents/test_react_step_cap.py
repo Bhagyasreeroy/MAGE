@@ -3,17 +3,23 @@ tests/agents/test_react_step_cap.py
 ────────────────────────────────────
 Honesty test for the ReAct step cap.
 
-``MAX_REACT_STEPS = 10`` is checked in the loop, but ``PipelinePlanner`` always
-emits exactly four steps, so the branch could never execute. Both build logs
-call it out as dead code and warn against describing it as an active safety
-guard — an examiner reading ``planner.py`` would see the plan length is fixed.
+``MAX_REACT_STEPS = 10`` is checked against ``len(steps)`` — the steps actually
+emitted, not the four static entries ``PipelinePlanner`` still always builds
+up front. ``OrchestratorAgent._reflect_on_mining`` (see agents/orchestrator.py)
+observes what MiningAgent found and can insert 1-3 further
+"OrchestratorAgent / reflect" steps that change what Visualization and
+Recommendation do next — so a real run is genuinely 4-7 steps depending on the
+data, not a compile-time constant. This is what closes the gap the original
+version of this file pinned: previously the planner's fixed-length list made
+the cap provably unreachable; now the loop is adaptive and the cap guards its
+actual length, even though 7 < 10 still means it does not fire in ordinary
+operation.
 
-Rather than delete the bound or keep overclaiming it, these tests pin what is
-actually true: the cap is a real, working defence that the *current* static
-planner cannot reach. That is a defensible thing to say in a viva, and this file
-is the evidence for it. If the planner ever becomes model-driven and emits a
-variable number of steps, the cap already holds and
-``test_a_runaway_plan_is_truncated`` already proves it.
+These tests pin two things: that a normal run — including one that hits every
+reflection trigger — stays under the cap, and that the cap still truncates and
+logs a plan that runs away regardless (``test_a_runaway_plan_is_truncated``).
+See tests/agents/test_orchestrator_reflection.py for the reflection triggers
+themselves.
 """
 
 from __future__ import annotations
