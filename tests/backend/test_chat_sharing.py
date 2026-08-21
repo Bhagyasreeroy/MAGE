@@ -23,6 +23,11 @@ from backend.main import app
 
 client = TestClient(app)
 
+# /analysis/run now refuses a request with no resolvable dataset (see
+# MissingDataSourceError in orchestrator_service.py) rather than silently
+# reporting on nothing — every _run() call needs a real data source.
+SAMPLE_CSV = b"order_id,region,revenue\n1,East,45.0\n2,West,120.5\n3,East,75.0\n4,North,60.0\n"
+
 
 def _unique_email() -> str:
     return f"share-test-{uuid.uuid4().hex[:12]}@example.com"
@@ -39,7 +44,14 @@ def _run(headers: dict[str, str], goal: str, root_run_id: str | None = None) -> 
     data = {"goal": goal, "expertise_level": "intermediate"}
     if root_run_id:
         data["root_run_id"] = root_run_id
-    return client.post("/analysis/run", headers=headers, data=data).json()
+    res = client.post(
+        "/analysis/run",
+        headers=headers,
+        data=data,
+        files={"file": ("sales.csv", SAMPLE_CSV, "text/csv")},
+    )
+    assert res.status_code == 200, res.text
+    return res.json()
 
 
 class TestConversationThreading:

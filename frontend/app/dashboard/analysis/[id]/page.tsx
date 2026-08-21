@@ -54,11 +54,23 @@ interface AnalysisResult {
   classification: GoalClassification | null;
   steps: StepResult[];
   recommendations: string[];
+  recommendation_cards?: RecommendationCard[];
   rag_sources: string[];
   summary: string;
   dataset_id?: string | null;
   run_id?: string | null;
   mode?: string;
+}
+
+interface RecommendationCard {
+  // Mirrors backend/schemas/analysis.py::RecommendationCard. `finding` is null
+  // when the recommendation came from goal-only retrieval, i.e. nothing in the
+  // user's data led to it.
+  insight: string;
+  finding: string | null;
+  guidance: string;
+  confidence: number;
+  sources: string[];
 }
 
 interface DataQualityRow {
@@ -229,6 +241,9 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   mode?: 'rag' | 'llm';
+  // Grounded replies carry their structured form. The LLM returns freeform
+  // markdown and has none, which is why `content` remains the fallback.
+  cards?: RecommendationCard[];
 }
 
 function formatReply(data: AnalysisResult, mode: 'rag' | 'llm'): string {
@@ -238,6 +253,65 @@ function formatReply(data: AnalysisResult, mode: 'rag' | 'llm'): string {
   return mode === 'llm'
     ? "The LLM didn't return a usable response — try rephrasing."
     : "I couldn't ground a recommendation for that — try rephrasing.";
+}
+
+/**
+ * One grounded recommendation, with its parts laid out as parts.
+ *
+ * A RAG answer is two different things joined: a finding computed from the
+ * user's own data, and the methodology the knowledge base offers about it.
+ * Flattened into one string they read as run-on prose — which is how a cited,
+ * grounded answer ended up looking worse than the LLM's freeform reply, even
+ * though it carries strictly more information.
+ *
+ * So each part gets its own treatment: the source document names the card, the
+ * finding leads with an accent rule because it is the part that is about
+ * *them*, the guidance follows as prose, and the citation sits at the foot
+ * where a reader looks to check the claim.
+ */
+function RecommendationCardView({ card, goal }: { card: RecommendationCard; goal: string }) {
+  return (
+    <div className="bg-warm-white/70 backdrop-blur-sm border border-dusty-rose/20 rounded-2xl p-5 min-w-0">
+      <div className="flex items-baseline justify-between gap-3 mb-3">
+        <p className="text-[11px] font-bold text-navy/45 uppercase tracking-widest min-w-0 truncate">
+          {card.insight || 'Recommendation'}
+        </p>
+        {card.confidence > 0 && (
+          <span
+            className="text-[10px] font-semibold text-navy/35 shrink-0 tabular-nums"
+            title="Retrieval confidence for the grounding passage"
+          >
+            {card.confidence.toFixed(2)}
+          </span>
+        )}
+      </div>
+
+      {/* Only when something in the data led here — a goal-only answer has no
+          finding, and a blank accent rule would imply one. */}
+      {card.finding && (
+        <p className="text-sm text-navy font-medium leading-relaxed border-l-2 border-peach/60 pl-3 mb-3">
+          {card.finding}
+        </p>
+      )}
+
+      <Markdown text={card.guidance} className="text-sm text-navy/70 font-light leading-relaxed" />
+
+      {card.sources.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mt-3.5">
+          {card.sources.map((src, i) => (
+            <span
+              key={i}
+              className="bg-cream-dark/60 border border-dusty-rose/20 rounded-xl px-2.5 py-1 text-[11px] text-navy/55 font-light flex items-center gap-1.5 cursor-default min-w-0"
+            >
+              <DocumentIcon /> <span className="truncate">{src}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <ExplainButton finding={card.finding || card.guidance} goal={goal} />
+    </div>
+  );
 }
 
 export default function AnalysisResultPage() {
@@ -282,6 +356,7 @@ export default function AnalysisResultPage() {
             role: 'assistant' as const,
             content: formatReply(run, (run.mode as 'rag' | 'llm') ?? 'rag'),
             mode: (run.mode as 'rag' | 'llm') ?? 'rag',
+            cards: run.recommendation_cards && run.recommendation_cards.length > 0 ? run.recommendation_cards : undefined,
           },
         ]);
         setChatHistory(rebuilt);
@@ -353,11 +428,23 @@ export default function AnalysisResultPage() {
       if (data.dataset_id) {
         setResult((prev) => (prev ? { ...prev, dataset_id: data.dataset_id } : prev));
       }
+      // Grounded replies keep their structure (cards) alongside the flattened
+      // fallback text — content remains what renders when there's nothing to
+      // ground (goal-only LLM replies, or no cards at all).
+      const cards = data.recommendation_cards ?? [];
       const reply = formatReply(data, (data.mode as 'rag' | 'llm') ?? chatMode);
 
       setChatHistory((prev) => [
         ...prev,
-        { id: crypto.randomUUID(), role: 'assistant', content: reply, mode: (data.mode as 'rag' | 'llm') ?? chatMode },
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          // Still the fallback: the LLM path has no cards, and so does a
+          // reply with nothing to ground.
+          content: reply,
+          mode: (data.mode as 'rag' | 'llm') ?? chatMode,
+          cards: cards.length > 0 ? cards : undefined,
+        },
       ]);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Something went wrong';
@@ -596,9 +683,42 @@ export default function AnalysisResultPage() {
 
         {/* Visualizations */}
         {(() => {
-          const vizOutput = result.steps.find((s) => s.agent_name === 'VisualizationAgent')?.output;
-          const specs = (vizOutput?.viz_specs as VizSpec[] | undefined) ?? [];
-          if (specs.length === 0) return null;
+          const vizStep = result.steps.find((s) => s.agent_name === 'VisualizationAgent');
+          const specs = (vizStep?.output?.viz_specs as VizSpec[] | undefined) ?? [];
+
+          // A chartless run gets a heading and a reason, not nothing.
+          //
+          // This section used to `return null` on an empty spec list, which
+          // removed it from the page entirely — so a run that legitimately
+          // produced no chart looked exactly like a backend that never
+          // answered at all. Both render as blank space where charts should
+          // be, and the reader has no way to tell a real result from a broken
+          // one. That ambiguity cost a debugging session on 21 Aug.
+          //
+          // The agent already explains itself: VisualizationAgent returns a
+          // `message` with every run ("No mining output or dataset available
+          // — visualization skipped." when Mining failed upstream, which is
+          // the case actually reachable today). Surface it rather than
+          // inventing wording here that could drift from what happened.
+          if (specs.length === 0) {
+            const reason = !vizStep
+              ? 'The visualization step did not run for this analysis.'
+              : vizStep.status !== 'success'
+                ? vizStep.observation || 'The visualization step did not complete.'
+                : ((vizStep.output?.message as string | undefined) ??
+                   'No chart suited this goal and this dataset.');
+
+            return (
+              <div className="mb-8">
+                <h3 className="text-xs font-bold text-navy/40 uppercase tracking-widest mb-3">Visualizations</h3>
+                <p className="text-navy/40 font-light text-sm">No charts for this run.</p>
+                {/* The agent's own message on its own line: it is a full
+                    sentence and often ends in an em-dash clause of its own,
+                    so joining it inline reads as a run-on. */}
+                <p className="text-[11px] text-navy/35 italic leading-relaxed font-light mt-1.5">{reason}</p>
+              </div>
+            );
+          }
 
           return (
             <div className="mb-8">
@@ -729,7 +849,15 @@ export default function AnalysisResultPage() {
         {/* Recommendations */}
         <div className="mb-8">
           <h3 className="text-xs font-bold text-navy/40 uppercase tracking-widest mb-3">Recommendations</h3>
-          {result.recommendations.length > 0 ? (
+          {result.recommendation_cards && result.recommendation_cards.length > 0 ? (
+            <div className="space-y-3">
+              {result.recommendation_cards.map((card, idx) => (
+                <RecommendationCardView key={idx} card={card} goal={result.goal} />
+              ))}
+            </div>
+          ) : result.recommendations.length > 0 ? (
+            // Runs replayed from history predate the structured form, so the
+            // flattened list stays as the fallback rather than rendering blank.
             <ul className="space-y-3">
               {result.recommendations.map((rec, idx) => (
                 <li key={idx} className="flex gap-3 text-navy/70 font-light">
@@ -848,7 +976,13 @@ export default function AnalysisResultPage() {
                   )}
                 </div>
               )}
-              {msg.role === 'assistant' ? (
+              {msg.role === 'assistant' && msg.cards ? (
+                <div className="space-y-3">
+                  {msg.cards.map((card, i) => (
+                    <RecommendationCardView key={i} card={card} goal={result.goal} />
+                  ))}
+                </div>
+              ) : msg.role === 'assistant' ? (
                 <Markdown text={msg.content} className="font-light leading-relaxed text-sm md:text-base" />
               ) : (
                 <p className="font-light leading-relaxed text-sm md:text-base">{msg.content}</p>

@@ -60,6 +60,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.explain_agent import ExplainAgent
 from agents.ingestion_agent import IngestionAgent
+from agents.orchestrator import build_recommendation_cards
 from backend.core.database import async_session, get_db
 from backend.core.rate_limit import (
     analysis_limit,
@@ -95,7 +96,7 @@ from backend.schemas.analysis import (
 )
 from backend.schemas.auth import MessageResponse
 from backend.services import analysis_run_service, dataset_service, export_service, transform_service
-from backend.services.orchestrator_service import OrchestratorService
+from backend.services.orchestrator_service import MissingDataSourceError, OrchestratorService
 from data_pipeline.ingestion import IngestionError
 from data_pipeline.processing import ProcessingError
 from rag.knowledge_loader import KnowledgeBaseLoader
@@ -174,6 +175,13 @@ async def run_analysis(
             root_run_id=resolved_root_run_id,
         )
         return result
+    except MissingDataSourceError as exc:
+        # The caller's mistake, not a pipeline failure — and it must be caught
+        # ahead of the generic handler below, which would report it as a 500.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
     except Exception as exc:
         logger.exception("Analysis pipeline failed: %s", exc)
         raise HTTPException(
@@ -354,6 +362,15 @@ async def _stream_analysis(websocket: WebSocket, token: str | None, db: AsyncSes
         # The client hung up. The run is left to finish so work already done
         # still gets persisted — the `finally` below is what waits for it.
         logger.info("Stream client disconnected; letting the run finish.")
+    except MissingDataSourceError as exc:
+        # Same distinction as the REST path: a bad request, not our failure.
+        # The stream endpoint only ever receives a dataset_id, so this is the
+        # id-resolves-to-nothing case.
+        try:
+            await websocket.send_json({"type": "error", "detail": str(exc)})
+            await websocket.close(code=WS_BAD_REQUEST)
+        except Exception:  # noqa: BLE001 - socket may already be gone
+            pass
     except Exception as exc:  # noqa: BLE001 - report, then close cleanly
         logger.exception("Streaming analysis failed: %s", exc)
         try:
@@ -567,12 +584,24 @@ def _to_response(run, *, public: bool = False) -> AnalysisResponse:
     for the public share endpoint, so an anonymous viewer never sees an id
     they have no way to use (every dataset endpoint is still owner-scoped
     regardless).
+
+    Cards are rebuilt here rather than stored. The structured
+    recommendations already live inside the persisted RecommendationAgent
+    step output, so a second stored copy would mean two sources of truth and
+    a migration for existing rows. Rebuilding here — the one place every
+    read path (history, thread, shared) constructs a response — means a run
+    recorded before cards existed still gets them, everywhere it's read.
     """
+    recommendation_step = next(
+        (s for s in (run.steps or []) if s.get("agent_name") == "RecommendationAgent"), None
+    )
+    structured = ((recommendation_step or {}).get("output") or {}).get("recommendations", [])
     return AnalysisResponse(
         goal=run.goal,
         expertise_level=run.expertise_level,
         steps=run.steps,
         recommendations=run.recommendations,
+        recommendation_cards=build_recommendation_cards(structured, run.expertise_level),
         rag_sources=run.rag_sources,
         summary=run.summary,
         dataset_id=None if public else run.dataset_id,

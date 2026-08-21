@@ -197,6 +197,43 @@ class KnowledgeSource(BaseModel):
     chunk_count: int = Field(..., description="Number of chunks this document was split into.")
 
 
+class RecommendationCard(BaseModel):
+    """
+    One recommendation with its parts separated.
+
+    A grounded recommendation is two things joined: a finding computed from the
+    user's data, and the methodology the knowledge base offers about it. Once
+    concatenated into a single string the frontend cannot tell them apart, so
+    it cannot lay them out differently — which made a cited, grounded answer
+    render as a paragraph of run-on prose beside the LLM's structured one.
+    """
+
+    insight: str = Field(
+        default="",
+        description="Title of the knowledge-base document this is grounded in.",
+    )
+    finding: str | None = Field(
+        default=None,
+        description=(
+            "The finding computed from the user's data that led here, or None "
+            "when the recommendation came from goal-only retrieval and there "
+            "is nothing to lead with."
+        ),
+    )
+    guidance: str = Field(
+        default="",
+        description="The methodology prose, in the reader's FR-04 register.",
+    )
+    confidence: float = Field(
+        default=0.0,
+        description="Retrieval confidence for the grounding chunk, 0-1.",
+    )
+    sources: list[str] = Field(
+        default_factory=list,
+        description="Knowledge-base file(s) this recommendation cites.",
+    )
+
+
 class AnalysisResponse(BaseModel):
     """Full EDA pipeline response returned to the client."""
 
@@ -221,6 +258,14 @@ class AnalysisResponse(BaseModel):
     recommendations: list[str] = Field(
         default_factory=list,
         description="RAG-grounded, expertise-adapted EDA recommendations.",
+    )
+    recommendation_cards: list[RecommendationCard] = Field(
+        default_factory=list,
+        description=(
+            "The same recommendations with their parts kept apart, so a reader "
+            "can see which half came from their data and which from the "
+            "knowledge base. `recommendations` above stays the flattened form."
+        ),
     )
     rag_sources: list[str] = Field(
         default_factory=list,

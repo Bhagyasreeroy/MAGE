@@ -49,6 +49,71 @@ class TestRunRequiresAuth:
         assert res.status_code == 401
 
 
+class TestRunRequiresADataset:
+    """
+    A run with no data source must be refused, not answered.
+
+    RecommendationAgent grounds against the knowledge base using the goal text
+    alone, so it happily produces five cited recommendations with no dataset in
+    play. Ingestion fails, Mining and Visualization report success at having
+    skipped, and the result renders as an ordinary report — methodology for the
+    goal's topic, presented as though it were analysis of the user's data.
+
+    That dataset-free retrieval is deliberate and stays: it is what the
+    follow-up chat uses. The bug is /analysis/run reusing it. Compare the
+    treatment of the other required input — omitting `goal` is already a 422.
+    """
+
+    def test_run_with_no_file_and_no_dataset_id_returns_422(self) -> None:
+        headers, _ = _auth_headers()
+        res = client.post(
+            "/analysis/run",
+            headers=headers,
+            data={"goal": "Which customers are likely to churn?", "expertise_level": "intermediate"},
+        )
+        assert res.status_code == 422, (
+            f"expected a refusal, got {res.status_code} — a run with no dataset "
+            "must not return a report"
+        )
+
+    def test_the_refusal_names_the_missing_input(self) -> None:
+        headers, _ = _auth_headers()
+        res = client.post(
+            "/analysis/run",
+            headers=headers,
+            data={"goal": "Which customers are likely to churn?"},
+        )
+        detail = str(res.json().get("detail", "")).lower()
+        assert "dataset" in detail or "file" in detail, detail
+
+    def test_an_unknown_dataset_id_is_also_refused(self) -> None:
+        """
+        A dataset_id that resolves to nothing (wrong id, or another user's)
+        leaves `data["source"]` unset exactly as omitting it does — same
+        failure, so it must get the same refusal rather than falling through
+        to a goal-only report.
+        """
+        headers, _ = _auth_headers()
+        res = client.post(
+            "/analysis/run",
+            headers=headers,
+            data={"goal": "Profile this dataset", "dataset_id": str(uuid.uuid4())},
+        )
+        assert res.status_code == 422
+
+    def test_a_run_with_a_file_still_succeeds(self) -> None:
+        """Control: the guard must not reject legitimate runs."""
+        headers, _ = _auth_headers()
+        res = client.post(
+            "/analysis/run",
+            headers=headers,
+            data={"goal": "Identify correlations in this dataset"},
+            files={"file": ("sales.csv", SAMPLE_CSV, "text/csv")},
+        )
+        assert res.status_code == 200
+        assert res.json()["dataset_id"]
+
+
 class TestRunPersistence:
     def test_run_with_file_returns_dataset_and_run_id(self) -> None:
         headers, _ = _auth_headers()
@@ -106,9 +171,13 @@ class TestRunPersistence:
             files={"file": ("sales.csv", SAMPLE_CSV, "text/csv")},
         ).json()
 
-        # User B tries to reuse user A's dataset_id — should silently get
-        # no source (ingestion fails gracefully) rather than user A's data.
-        run_b = client.post(
+        # User B tries to reuse user A's dataset_id. `get_dataset` is
+        # user-scoped, so it resolves to nothing — which is now a refusal
+        # rather than a run that quietly proceeds without a source. The
+        # security property is unchanged and the message is deliberately the
+        # same one an unknown id gets, so B cannot distinguish "someone else
+        # owns this" from "no such dataset".
+        res_b = client.post(
             "/analysis/run",
             headers=headers_b,
             data={
@@ -116,13 +185,72 @@ class TestRunPersistence:
                 "expertise_level": "intermediate",
                 "dataset_id": run_a["dataset_id"],
             },
-        ).json()
+        )
 
-        ingestion_step = next(s for s in run_b["steps"] if s["agent_name"] == "IngestionAgent")
-        assert ingestion_step["status"] == "error"
+        assert res_b.status_code == 422
+        # The point of the test: none of user A's data came back.
+        blob = res_b.text
+        for leaked in ("order_id", "region", "120.5", "West"):
+            assert leaked not in blob, f"{leaked!r} leaked to a non-owner"
 
         client.delete("/auth/me", headers=headers_a)
         client.delete("/auth/me", headers=headers_b)
+
+
+class TestRecommendationCards:
+    def test_the_response_carries_structured_cards(self) -> None:
+        """
+        The flattened `recommendations` list is what exports and history read,
+        so it stays. `recommendation_cards` is what the UI lays out — without
+        it the frontend has one string per recommendation and no way to
+        distinguish the finding from the methodology.
+        """
+        headers, _ = _auth_headers()
+        body = client.post(
+            "/analysis/run",
+            headers=headers,
+            data={"goal": "Identify correlations in this dataset", "expertise_level": "expert"},
+            files={"file": ("sales.csv", SAMPLE_CSV, "text/csv")},
+        ).json()
+
+        cards = body["recommendation_cards"]
+        assert len(cards) == len(body["recommendations"]), (
+            "one card per recommendation — the two forms describe the same items"
+        )
+        assert any(c["insight"] for c in cards), "a card must name its source document"
+        assert all(c["guidance"] for c in cards), "a card without guidance renders empty"
+        assert all(0.0 <= c["confidence"] <= 1.0 for c in cards)
+
+
+class TestCardsSurviveHistory:
+    def test_a_replayed_run_still_renders_as_cards(self) -> None:
+        """
+        The report page loads a *persisted* run, so cards that exist only on
+        the immediate POST response never reach the surface they were built
+        for — which is exactly what happened the first time this shipped.
+
+        Cards are not stored as their own column: the structured
+        recommendations already live inside the persisted RecommendationAgent
+        step output, so history rebuilds the cards from those with the same
+        code the live path uses. One source of truth, no migration.
+        """
+        headers, _ = _auth_headers()
+        run = client.post(
+            "/analysis/run",
+            headers=headers,
+            data={"goal": "Identify correlations in this dataset", "expertise_level": "expert"},
+            files={"file": ("sales.csv", SAMPLE_CSV, "text/csv")},
+        ).json()
+
+        replayed = client.get(f"/analysis/history/{run['run_id']}", headers=headers).json()
+
+        assert replayed["recommendation_cards"], "a replayed run must still carry cards"
+        assert len(replayed["recommendation_cards"]) == len(run["recommendation_cards"])
+        assert (
+            replayed["recommendation_cards"][0]["insight"]
+            == run["recommendation_cards"][0]["insight"]
+        )
+        assert replayed["recommendation_cards"][0]["guidance"]
 
 
 class TestHistory:
@@ -130,10 +258,13 @@ class TestHistory:
         headers_a, _ = _auth_headers()
         headers_b, _ = _auth_headers()
 
+        # A file, because a run now requires one. These tests are about history
+        # and ownership; the dataset is fixture, not subject.
         client.post(
             "/analysis/run",
             headers=headers_a,
             data={"goal": "User A's goal for this run", "expertise_level": "intermediate"},
+            files={"file": ("sales.csv", SAMPLE_CSV, "text/csv")},
         )
 
         history_a = client.get("/analysis/history", headers=headers_a).json()
@@ -152,6 +283,7 @@ class TestHistory:
             "/analysis/run",
             headers=headers,
             data={"goal": "Detail lookup test goal", "expertise_level": "expert"},
+            files={"file": ("sales.csv", SAMPLE_CSV, "text/csv")},
         ).json()
 
         detail = client.get(f"/analysis/history/{run['run_id']}", headers=headers)
@@ -168,6 +300,7 @@ class TestHistory:
             "/analysis/run",
             headers=headers_a,
             data={"goal": "Private goal only A should see", "expertise_level": "intermediate"},
+            files={"file": ("sales.csv", SAMPLE_CSV, "text/csv")},
         ).json()
 
         res = client.get(f"/analysis/history/{run['run_id']}", headers=headers_b)
