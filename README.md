@@ -12,6 +12,19 @@ grounded in a retrievable methodology source, not just an LLM's opinion.
 
 ---
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Landing page](docs/screenshots/landing.png) | ![Sign in](docs/screenshots/signin.png) |
+| Landing page | Sign in |
+| ![Analysis workspace](docs/screenshots/analysis-workspace.png) | ![Dashboard](docs/screenshots/dashboard.png) |
+| Analysis workspace — agent pipeline, executive summary | Dashboard |
+| ![Charts](docs/screenshots/charts.png) | ![Enlarged chart](docs/screenshots/chart-enlarged.png) |
+| Goal-conditioned charts (cluster scatter, pairplot) | Click-to-enlarge chart view |
+
+---
+
 ## What it does
 
 - **Goal-conditioned pipeline** — a goal classifier reads your question
