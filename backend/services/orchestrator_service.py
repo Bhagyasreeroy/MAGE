@@ -92,6 +92,7 @@ class OrchestratorService:
         user_id: str,
         file: UploadFile | None = None,
         dataset_id: str | None = None,
+        root_run_id: str | None = None,
         on_step: Callable[[dict[str, Any]], None] | None = None,
     ) -> AnalysisResponse:
         """Orchestrate a full MAGE pipeline run for the given request.
@@ -101,6 +102,10 @@ class OrchestratorService:
         querying the same dataset. If only `dataset_id` is given, the
         previously-uploaded file is looked up (scoped to `user_id`) and
         reused.
+
+        `root_run_id`, when given, is the conversation this run continues —
+        forwarded straight to `analysis_run_service.save_run`, which does the
+        actual resolution/validation; this layer just threads it through.
 
         `on_step`, when supplied, is forwarded to the agent and invoked once
         per completed pipeline step — this is what the WebSocket endpoint uses
@@ -184,6 +189,7 @@ class OrchestratorService:
             rag_sources=rag_sources,
             summary=summary,
             dataset_id=resolved_dataset_id,
+            root_run_id=root_run_id,
         )
 
         return AnalysisResponse(

@@ -10,6 +10,11 @@ Endpoints:
     GET  /analysis/knowledge-sources - list the RAG knowledge base documents
     GET  /analysis/history          - list the current user's past analysis runs
     GET  /analysis/history/{run_id} - fetch one past run in full
+    GET  /analysis/history/{run_id}/thread           - every run in that run's conversation, oldest first
+    GET  /analysis/history/{run_id}/share            - is this conversation publicly shared?
+    POST /analysis/history/{run_id}/share            - share this conversation publicly
+    DELETE /analysis/history/{run_id}/share          - revoke a conversation's public share
+    GET  /analysis/shared/{root_run_id}              - public: view a shared conversation, no login
     GET  /analysis/history/{run_id}/export/pdf       - download a PDF report
     GET  /analysis/history/{run_id}/export/json      - download the raw run as JSON
     GET  /analysis/history/{run_id}/export/citations - download a BibTeX citation bundle
@@ -23,8 +28,9 @@ Endpoints:
     POST /analysis/datasets/{id}/query/nl        - translate plain English into SQL, then run it
     POST /analysis/explain                       - deeper RAG-grounded explanation of a finding
 
-All endpoints except /knowledge-sources require authentication — analysis
-runs and datasets are scoped to the authenticated user.
+All endpoints except /knowledge-sources and /shared/{root_run_id} require
+authentication — analysis runs and datasets are scoped to the authenticated
+user.
 """
 
 from __future__ import annotations
@@ -84,6 +90,7 @@ from backend.schemas.analysis import (
     QueryRequest,
     RecommendationMode,
     SampleDataset,
+    ShareStatus,
     TransformRequest,
 )
 from backend.schemas.auth import MessageResponse
@@ -133,6 +140,7 @@ async def run_analysis(
     mode: RecommendationMode = Form(RecommendationMode.rag),
     file: UploadFile | None = File(None),
     dataset_id: str | None = Form(None),
+    root_run_id: str | None = Form(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> AnalysisResponse:
@@ -145,15 +153,25 @@ async def run_analysis(
       in a single multipart/form-data request.
     - `mode` selects how RecommendationAgent responds: "rag" (default,
       grounded/cited) or "llm" (freeform Gemini response, no citations).
+    - `root_run_id`, when given, marks this as a follow-up in an existing
+      conversation. It's resolved through the caller's own run (never
+      trusted as-is): if it doesn't belong to `current_user`, it's silently
+      dropped and this becomes a fresh conversation instead of erroring.
     - Delegates to the OrchestratorAgent which runs the ReAct loop.
     - Persists the run to the user's history.
     - Returns structured EDA recommendations grounded in the RAG layer,
       plus dataset_id/run_id to reuse for follow-up calls / history lookups.
     """
     request = AnalysisRequest(goal=goal, expertise_level=expertise_level, mode=mode)
+    resolved_root_run_id: str | None = None
+    if root_run_id:
+        owned = await analysis_run_service.get_run(db, current_user.id, root_run_id)
+        if owned is not None:
+            resolved_root_run_id = owned.root_run_id
     try:
         result = await _orchestrator_service.run(
-            request, db=db, user_id=current_user.id, file=file, dataset_id=dataset_id
+            request, db=db, user_id=current_user.id, file=file, dataset_id=dataset_id,
+            root_run_id=resolved_root_run_id,
         )
         return result
     except Exception as exc:
@@ -532,16 +550,7 @@ async def get_history_run(
     db: AsyncSession = Depends(get_db),
 ) -> AnalysisResponse:
     run = await _get_owned_run(run_id, current_user, db)
-    return AnalysisResponse(
-        goal=run.goal,
-        expertise_level=run.expertise_level,
-        steps=run.steps,
-        recommendations=run.recommendations,
-        rag_sources=run.rag_sources,
-        summary=run.summary,
-        dataset_id=run.dataset_id,
-        run_id=run.id,
-    )
+    return _to_response(run)
 
 
 async def _get_owned_run(run_id: str, current_user: User, db: AsyncSession):
@@ -549,6 +558,123 @@ async def _get_owned_run(run_id: str, current_user: User, db: AsyncSession):
     if run is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis run not found.")
     return run
+
+
+def _to_response(run, *, public: bool = False) -> AnalysisResponse:
+    """Build the API shape for one persisted run.
+
+    `public=True` clears `dataset_id` before returning — defense-in-depth
+    for the public share endpoint, so an anonymous viewer never sees an id
+    they have no way to use (every dataset endpoint is still owner-scoped
+    regardless).
+    """
+    return AnalysisResponse(
+        goal=run.goal,
+        expertise_level=run.expertise_level,
+        steps=run.steps,
+        recommendations=run.recommendations,
+        rag_sources=run.rag_sources,
+        summary=run.summary,
+        dataset_id=None if public else run.dataset_id,
+        run_id=run.id,
+    )
+
+
+@router.get(
+    "/history/{run_id}/thread",
+    response_model=list[AnalysisResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Fetch every run in a conversation, oldest first",
+)
+async def get_history_thread(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[AnalysisResponse]:
+    root = await analysis_run_service.resolve_root(db, current_user.id, run_id)
+    if root is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis run not found.")
+    runs = await analysis_run_service.list_thread(db, root.id)
+    return [_to_response(r) for r in runs]
+
+
+@router.get(
+    "/history/{run_id}/share",
+    response_model=ShareStatus,
+    status_code=status.HTTP_200_OK,
+    summary="Check whether a conversation is publicly shared",
+)
+async def get_share_status(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ShareStatus:
+    root = await analysis_run_service.resolve_root(db, current_user.id, run_id)
+    if root is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis run not found.")
+    return ShareStatus(is_shared=root.is_shared, share_id=root.id)
+
+
+@router.post(
+    "/history/{run_id}/share",
+    response_model=ShareStatus,
+    status_code=status.HTTP_200_OK,
+    summary="Make a conversation publicly viewable via its share link",
+)
+async def share_run(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ShareStatus:
+    root = await analysis_run_service.resolve_root(db, current_user.id, run_id)
+    if root is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis run not found.")
+    root.is_shared = True
+    await db.commit()
+    return ShareStatus(is_shared=True, share_id=root.id)
+
+
+@router.delete(
+    "/history/{run_id}/share",
+    response_model=ShareStatus,
+    status_code=status.HTTP_200_OK,
+    summary="Revoke a conversation's public share link",
+)
+async def unshare_run(
+    run_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ShareStatus:
+    root = await analysis_run_service.resolve_root(db, current_user.id, run_id)
+    if root is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Analysis run not found.")
+    root.is_shared = False
+    await db.commit()
+    return ShareStatus(is_shared=False, share_id=root.id)
+
+
+@router.get(
+    "/shared/{root_run_id}",
+    response_model=list[AnalysisResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Public: view a shared conversation, no account required",
+)
+async def get_shared_thread(
+    root_run_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> list[AnalysisResponse]:
+    """
+    No `get_current_user` dependency — deliberately public, alongside
+    `/knowledge-sources`. `root_run_id` must name the conversation's root
+    row itself (not merely any run inside it) and that root must have
+    `is_shared=True`, or this 404s exactly like an unshared/nonexistent
+    run — a caller can't distinguish "never existed" from "not shared".
+    """
+    root = await analysis_run_service.get_run_unscoped(db, root_run_id)
+    if root is None or not root.is_shared or root.id != root.root_run_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shared analysis not found.")
+    runs = await analysis_run_service.list_thread(db, root.id)
+    return [_to_response(r, public=True) for r in runs]
 
 
 @router.get(

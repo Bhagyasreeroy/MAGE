@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.core.database import Base
@@ -41,6 +41,18 @@ class AnalysisRun(Base):
         ForeignKey("datasets.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Self-referential: equals `id` for a run that starts a fresh
+    # conversation, or the conversation's original root `id` for a
+    # follow-up. "A conversation" = every row sharing a `root_run_id`,
+    # ordered by `created_at`. `is_shared` only ever matters on the root
+    # row — sharing applies to the whole conversation, not one turn.
+    root_run_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("analysis_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    is_shared: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     goal: Mapped[str] = mapped_column(Text, nullable=False)
     expertise_level: Mapped[str] = mapped_column(String(20), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="success")

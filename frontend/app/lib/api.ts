@@ -320,6 +320,33 @@ export async function fetchAnalysisRun(runId: string): Promise<unknown> {
   return apiFetch(`/analysis/history/${runId}`, { auth: true });
 }
 
+export async function fetchAnalysisThread(runId: string): Promise<unknown[]> {
+  return apiFetch(`/analysis/history/${runId}/thread`, { auth: true });
+}
+
+export interface ShareStatus {
+  is_shared: boolean;
+  share_id: string;
+}
+
+export async function getShareStatus(runId: string): Promise<ShareStatus> {
+  return apiFetch(`/analysis/history/${runId}/share`, { auth: true });
+}
+
+export async function shareRun(runId: string): Promise<ShareStatus> {
+  return apiFetch(`/analysis/history/${runId}/share`, { method: "POST", auth: true });
+}
+
+export async function unshareRun(runId: string): Promise<ShareStatus> {
+  return apiFetch(`/analysis/history/${runId}/share`, { method: "DELETE", auth: true });
+}
+
+// Public — no account required, mirrors the unauthenticated pattern already
+// used for registerUser/loginUser.
+export async function fetchSharedThread(rootRunId: string): Promise<unknown[]> {
+  return apiFetch(`/analysis/shared/${rootRunId}`);
+}
+
 export async function fetchDatasets(): Promise<DatasetSummary[]> {
   return apiFetch<DatasetSummary[]>("/analysis/datasets", { auth: true });
 }

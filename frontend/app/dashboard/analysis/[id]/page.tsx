@@ -8,6 +8,10 @@ import {
   downloadAuthenticatedFile,
   explainFinding,
   fetchAnalysisRun,
+  fetchAnalysisThread,
+  getShareStatus,
+  shareRun,
+  unshareRun,
 } from '../../../lib/api';
 import {
   BarChart,
@@ -208,11 +212,32 @@ const CitationIcon = () => (
   </svg>
 );
 
+const ShareIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.684 13.342a4 4 0 100-2.684m0 2.684a4 4 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a4 4 0 105.368-5.368 4 4 0 00-5.368 5.368zm0 9.316a4 4 0 105.368 5.368 4 4 0 00-5.368-5.368z" />
+  </svg>
+);
+
+const CopyIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+  </svg>
+);
+
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   mode?: 'rag' | 'llm';
+}
+
+function formatReply(data: AnalysisResult, mode: 'rag' | 'llm'): string {
+  if (data.recommendations.length > 0) {
+    return data.recommendations.join('\n\n');
+  }
+  return mode === 'llm'
+    ? "The LLM didn't return a usable response — try rephrasing."
+    : "I couldn't ground a recommendation for that — try rephrasing.";
 }
 
 export default function AnalysisResultPage() {
@@ -224,6 +249,11 @@ export default function AnalysisResultPage() {
   const [chatMode, setChatMode] = useState<'rag' | 'llm'>('rag');
   const [exportingKey, setExportingKey] = useState<'pdf' | 'json' | 'citations' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [shareStatus, setShareStatus] = useState<{ is_shared: boolean; share_id: string } | null>(null);
+  const [isShareOpen, setIsShareOpen] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -234,6 +264,36 @@ export default function AnalysisResultPage() {
       .catch(() => {
         if (!cancelled) setResult(null);
       });
+
+    // Rebuild the visible chat from whatever follow-ups were already
+    // persisted for this conversation — otherwise a reload silently drops
+    // every follow-up turn (each is its own run, and only the first was
+    // ever re-fetched here).
+    fetchAnalysisThread(params.id)
+      .then((thread) => {
+        if (cancelled) return;
+        const runs = thread as AnalysisResult[];
+        if (runs.length < 2) return;
+        const [, ...followUps] = runs;
+        const rebuilt: ChatMessage[] = followUps.flatMap((run) => [
+          { id: crypto.randomUUID(), role: 'user' as const, content: run.goal },
+          {
+            id: crypto.randomUUID(),
+            role: 'assistant' as const,
+            content: formatReply(run, (run.mode as 'rag' | 'llm') ?? 'rag'),
+            mode: (run.mode as 'rag' | 'llm') ?? 'rag',
+          },
+        ]);
+        setChatHistory(rebuilt);
+      })
+      .catch(() => {});
+
+    getShareStatus(params.id)
+      .then((status) => {
+        if (!cancelled) setShareStatus(status);
+      })
+      .catch(() => {});
+
     return () => {
       cancelled = true;
     };
@@ -277,6 +337,10 @@ export default function AnalysisResultPage() {
       formData.append('goal', goal);
       formData.append('expertise_level', result.expertise_level);
       formData.append('mode', chatMode);
+      // Always the id in the URL — the backend resolves this to the
+      // conversation's actual root regardless of which run in the thread
+      // that happens to be, so every follow-up lands in the same thread.
+      formData.append('root_run_id', params.id);
       if (result.dataset_id) {
         // Re-references the same uploaded dataset server-side — no
         // re-upload needed, and the full pipeline (real stats + RAG)
@@ -289,12 +353,7 @@ export default function AnalysisResultPage() {
       if (data.dataset_id) {
         setResult((prev) => (prev ? { ...prev, dataset_id: data.dataset_id } : prev));
       }
-      const reply =
-        data.recommendations.length > 0
-          ? data.recommendations.join('\n\n')
-          : chatMode === 'llm'
-          ? "The LLM didn't return a usable response — try rephrasing."
-          : "I couldn't ground a recommendation for that — try rephrasing.";
+      const reply = formatReply(data, (data.mode as 'rag' | 'llm') ?? chatMode);
 
       setChatHistory((prev) => [
         ...prev,
@@ -305,6 +364,33 @@ export default function AnalysisResultPage() {
       setChatHistory((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `Error: ${message}` }]);
     } finally {
       setIsSending(false);
+    }
+  }
+
+  async function handleShareToggle() {
+    if (isSharing) return;
+    setShareError(null);
+    setIsSharing(true);
+    try {
+      const next = shareStatus?.is_shared ? await unshareRun(params.id) : await shareRun(params.id);
+      setShareStatus(next);
+      setLinkCopied(false);
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : 'Could not update sharing');
+    } finally {
+      setIsSharing(false);
+    }
+  }
+
+  async function handleCopyShareLink() {
+    if (!shareStatus) return;
+    const url = `${window.location.origin}/share/${shareStatus.share_id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    } catch {
+      setShareError('Could not copy the link — select and copy it manually.');
     }
   }
 
@@ -342,6 +428,64 @@ export default function AnalysisResultPage() {
           </div>
           <p className="text-navy/60 font-light text-lg">Goal: {result.goal}</p>
         </div>
+        {result.run_id && (
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsShareOpen((open) => !open)}
+              className="flex items-center gap-2 text-sm font-semibold text-navy bg-cream-dark/60 hover:bg-cream-dark px-4 py-2.5 rounded-xl transition-colors"
+            >
+              <ShareIcon />
+              Share
+            </button>
+            {isShareOpen && (
+              <div className="absolute right-0 mt-2 w-80 bg-warm-white border border-dusty-rose/20 rounded-2xl shadow-lg shadow-navy/10 p-5 z-10 animate-fade-in">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-bold text-navy">Share this conversation</p>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={shareStatus?.is_shared ?? false}
+                    onClick={handleShareToggle}
+                    disabled={isSharing || shareStatus === null}
+                    className={`w-11 h-6 rounded-full transition-colors relative disabled:opacity-50 ${
+                      shareStatus?.is_shared ? 'bg-navy' : 'bg-dusty-rose/30'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                        shareStatus?.is_shared ? 'translate-x-5' : ''
+                      }`}
+                    />
+                  </button>
+                </div>
+                <p className="text-xs text-navy/50 font-light leading-relaxed mb-4">
+                  {shareStatus?.is_shared
+                    ? 'Anyone with this link can view this conversation — no sign-in required.'
+                    : 'Off — this conversation is only visible to you.'}
+                </p>
+                {shareError && <p className="text-xs text-dusty-rose mb-3">{shareError}</p>}
+                {shareStatus?.is_shared && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      readOnly
+                      value={`${typeof window !== 'undefined' ? window.location.origin : ''}/share/${shareStatus.share_id}`}
+                      className="flex-1 min-w-0 bg-cream/60 border border-dusty-rose/20 rounded-xl px-3 py-2 text-xs text-navy/70 font-light truncate"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCopyShareLink}
+                      className="shrink-0 flex items-center gap-1.5 text-xs font-semibold text-navy bg-cream-dark/60 hover:bg-cream-dark px-3 py-2 rounded-xl transition-colors"
+                    >
+                      <CopyIcon />
+                      {linkCopied ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Initial Report (Treated as first AI response) ──────────── */}

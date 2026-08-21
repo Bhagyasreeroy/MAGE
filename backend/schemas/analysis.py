@@ -256,6 +256,14 @@ class AnalysisRunSummary(BaseModel):
     created_at: datetime
 
 
+class ShareStatus(BaseModel):
+    """Whether a conversation (a run and everything it's a follow-up to,
+    or that follows up on it) is publicly shared, and the id to share."""
+
+    is_shared: bool
+    share_id: str = Field(..., description="The conversation's root run id — also its public share id.")
+
+
 class DatasetSummary(BaseModel):
     """A lightweight entry in a user's dataset list."""
 
