@@ -30,24 +30,47 @@ from typing import Any
 from agents.goal_classifier import GoalClassifier, _extract_columns, _find_target_column
 from agents.ingestion_agent import IngestionAgent
 from agents.mining_agent import MiningAgent
-from agents.planner import INGESTION, MINING, PipelinePlanner
+from agents.planner import INGESTION, MINING, RECOMMENDATION, VISUALIZATION, PipelinePlanner
 from agents.recommendation_agent import RecommendationAgent
 from agents.visualization_agent import VisualizationAgent
 from backend.schemas.analysis import GoalClassification, TaskType
 
 logger = logging.getLogger(__name__)
 
-# Upper bound on ReAct iterations.
+# Upper bound on total ReAct steps actually emitted (not on planned entries —
+# see `len(steps) >= MAX_REACT_STEPS` below).
 #
-# Describe this accurately: it is a working bound that the *current* planner
-# cannot reach, not an active safety guard. PipelinePlanner emits exactly four
-# steps for every task type, so the check below has never fired in production
-# and cannot until the plan becomes variable-length — which is what a
-# model-driven loop would make it. The bound is kept rather than deleted
-# because it is the thing that makes such a loop safe to introduce, and
-# tests/agents/test_react_step_cap.py proves it truncates a runaway plan and
-# logs when it does. Do not present it as evidence of a guarded ReAct loop.
+# PipelinePlanner still always emits exactly four planned entries, but the run
+# is no longer just those four: `_reflect_on_mining` below inspects what
+# Mining actually found and can insert 1-3 extra "OrchestratorAgent / reflect"
+# steps that change what Visualization and Recommendation do next (see their
+# docstrings). A normal run is therefore 4-7 steps depending on the data, not
+# a compile-time constant — this bound now guards a loop whose length is
+# genuinely data-dependent. It still won't fire in ordinary operation (7 < 10
+# even when every trigger fires at once), which is expected, not evidence the
+# guard is unreachable: tests/agents/test_react_step_cap.py proves it does
+# truncate and log when a plan runs away regardless.
 MAX_REACT_STEPS = 10
+
+# ── Reflection thresholds ────────────────────────────────────────────────────
+# Read literally: below this, KMeans's own silhouette score calls its fit
+# "weak" (common rule-of-thumb bands: <0.25 weak, 0.25-0.5 reasonable
+# structure, >0.5 strong). DBSCAN is already computed unconditionally for
+# every clustering goal, so when KMeans is weak the orchestrator considers
+# switching to it rather than silently presenting a poor k-means fit.
+WEAK_SILHOUETTE_THRESHOLD = 0.35
+# Below this train R²/accuracy, a SHAP/permutation attribution ranking is
+# describing a model that can't predict the target, not the target itself.
+# Caveat, stated rather than hidden: this is an absolute cutoff, not one
+# relative to a baseline (e.g. majority-class accuracy for an imbalanced
+# classification target) — a classifier at 0.3 accuracy over 10 balanced
+# classes is unremarkable, the same 0.3 over 2 classes is barely above chance.
+# A follow-up could compare against that baseline instead of a fixed number.
+LOW_ATTRIBUTION_MODEL_SCORE = 0.3
+# Below this completeness, downstream modelling on the target (attribution,
+# classification, regression) is being fit on a shrunken, possibly biased
+# subset of rows — worth flagging ahead of whatever that modelling found.
+LOW_TARGET_COMPLETENESS_PCT = 70.0
 
 # FR-04 — which recommendation register each expertise level reads.
 # ExpertiseLevel value → RecommendationAgent field, mapping the system's enum
@@ -159,8 +182,8 @@ class OrchestratorAgent:
             except Exception:  # noqa: BLE001 - a listener must never break the pipeline
                 logger.warning("on_step callback raised; continuing run.", exc_info=True)
 
-        for step_idx, planned in enumerate(plan):
-            if step_idx >= MAX_REACT_STEPS:
+        for planned in plan:
+            if len(steps) >= MAX_REACT_STEPS:
                 logger.warning("ReAct step limit (%d) reached — halting.", MAX_REACT_STEPS)
                 break
 
@@ -182,6 +205,11 @@ class OrchestratorAgent:
                 detected = context.get("detected_target_column")
                 if detected:
                     directives["target_column"] = detected
+            # Visualization and Recommendation additionally read whatever the
+            # post-Mining reflection decided (see _reflect_on_mining) — empty
+            # unless a reflection step actually fired for this run.
+            if planned.agent_name in (VISUALIZATION, RECOMMENDATION):
+                directives.update(context.get("mining_reflection", {}))
             context["directives"] = directives
 
             # ACT — invoke the specialist, timing the call.
@@ -217,9 +245,111 @@ class OrchestratorAgent:
                     if not classification.target_column:
                         classification.target_column = detected
 
+            # OBSERVE → RE-PLAN — react to what Mining actually found before
+            # Visualization/Recommendation run. This is the loop's one real
+            # branch point: zero to three extra steps, depending on the data.
+            if planned.agent_name == MINING and status == "success":
+                target_column = classification.target_column or context.get("detected_target_column")
+                for reflection_step in self._reflect_on_mining(output_dict, context, target_column):
+                    emit(reflection_step)
+
         return self._aggregate(goal, expertise_level, mode, classification, steps, context)
 
     # ── Internal helpers ──────────────────────────────────────────────────────
+
+    def _reflect_on_mining(
+        self, mining_output: dict[str, Any], context: dict[str, Any], target_column: str | None,
+    ) -> list[dict[str, Any]]:
+        """
+        Inspect what Mining actually found and decide whether it changes what
+        gets presented next — the loop's observe-and-replan point.
+
+        Three independent checks, each against a signal MiningAgent already
+        computes (silhouette score, SHAP/permutation model_score, target
+        completeness). Any that fire append one synthetic
+        ``"OrchestratorAgent" / "reflect"`` step naming the observation and the
+        decision it caused, and record the decision in
+        ``context["mining_reflection"]`` — merged into the directives for the
+        Visualization and Recommendation steps that follow (see `run()`), so
+        the decision actually changes what those agents do rather than only
+        being logged. Returns ``[]``, and leaves ``mining_reflection`` empty,
+        when nothing fires — the common case on clean data.
+
+        Reflection steps are tagged "OrchestratorAgent", not "MiningAgent", so
+        `orchestrator_service._remember()`'s `next(... agent_name == MINING)`
+        lookup keeps resolving to the real Mining step's output.
+        """
+        reflection: dict[str, Any] = {}
+        emitted: list[dict[str, Any]] = []
+
+        clustering = mining_output.get("clustering")
+        if clustering and clustering.get("silhouette_score") is not None:
+            score = clustering["silhouette_score"]
+            if score < WEAK_SILHOUETTE_THRESHOLD:
+                dbscan = mining_output.get("dbscan")
+                if dbscan and dbscan.get("n_clusters", 0) >= 2 and dbscan.get("points"):
+                    reflection["preferred_clustering"] = "dbscan"
+                    emitted.append(self._step(
+                        "OrchestratorAgent", "reflect",
+                        f"KMeans silhouette score {score} is weak (<{WEAK_SILHOUETTE_THRESHOLD}) — "
+                        "the k-means partition doesn't separate this data well.",
+                        f"Switching to DBSCAN as the reported clustering result: "
+                        f"{dbscan['n_clusters']} density-based cluster(s), {dbscan['n_noise']} noise point(s).",
+                        "success", 0,
+                        {"decision": "prefer_dbscan", "kmeans_silhouette": score, "dbscan": dbscan},
+                    ))
+                else:
+                    reflection["preferred_clustering"] = "kmeans"
+                    emitted.append(self._step(
+                        "OrchestratorAgent", "reflect",
+                        f"KMeans silhouette score {score} is weak (<{WEAK_SILHOUETTE_THRESHOLD}), and "
+                        "DBSCAN didn't find a usable alternative (fewer than 2 clusters).",
+                        "Reporting the KMeans result with an explicit weak-fit caveat rather than "
+                        "presenting it as a confident finding.",
+                        "success", 0,
+                        {"decision": "flag_weak_clustering", "kmeans_silhouette": score},
+                    ))
+
+        attribution = mining_output.get("feature_attribution") or {}
+        model_score = attribution.get("model_score")
+        if model_score is not None:
+            if model_score < LOW_ATTRIBUTION_MODEL_SCORE:
+                reflection["attribution_trusted"] = False
+                emitted.append(self._step(
+                    "OrchestratorAgent", "reflect",
+                    f"The feature-attribution model scored {model_score} predicting "
+                    f"'{attribution.get('target')}' — below {LOW_ATTRIBUTION_MODEL_SCORE}, too low to "
+                    "trust which feature the ranking says matters most.",
+                    "Marking this attribution as low-confidence rather than surfacing it as a top finding.",
+                    "success", 0,
+                    {"decision": "distrust_attribution", "model_score": model_score},
+                ))
+            else:
+                reflection["attribution_trusted"] = True
+
+        if target_column:
+            quality = (mining_output.get("data_quality") or {}).get(target_column)
+            if quality is not None:
+                completeness = quality.get("completeness_pct", 100.0)
+                if completeness < LOW_TARGET_COMPLETENESS_PCT:
+                    reflection["target_quality_warning"] = (
+                        f"Target column '{target_column}' is only {completeness}% complete "
+                        f"({quality.get('missing_count', 0)} missing) — downstream modelling on it "
+                        "is unreliable until this is addressed."
+                    )
+                    emitted.append(self._step(
+                        "OrchestratorAgent", "reflect",
+                        f"Target '{target_column}' is {round(100 - completeness, 1)}% missing — "
+                        f"below the {100 - LOW_TARGET_COMPLETENESS_PCT:.0f}% missingness this run "
+                        "treats as trustworthy for modelling.",
+                        "Leading with a data-quality recommendation for this target ahead of "
+                        "whatever attribution/classification found on it.",
+                        "success", 0,
+                        {"decision": "target_quality_warning", "completeness_pct": completeness},
+                    ))
+
+        context["mining_reflection"] = reflection
+        return emitted
 
     @staticmethod
     def _step(

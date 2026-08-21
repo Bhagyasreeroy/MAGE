@@ -131,3 +131,29 @@ class TestMiningAgentClustering:
         df = pd.DataFrame({"a": range(20)})
         result = agent.run(context={"dataframe": df, "goal": "profile"})
         assert result["clustering"] is None
+
+
+class TestMiningAgentDBSCAN:
+    """DBSCAN's points field lets the orchestrator swap it in as the
+    presented clustering result when KMeans's silhouette is weak (see
+    OrchestratorAgent._reflect_on_mining) — it needs coordinates to draw a
+    scatter, the same as KMeans's own clustering.points."""
+
+    def test_dbscan_points_mirror_clustering_shape(self, agent: MiningAgent, sample_df) -> None:
+        result = agent.run(
+            context={"dataframe": sample_df, "goal": "profile", "directives": {"computations": ["dbscan"]}}
+        )
+        dbscan = result["dbscan"]
+        assert dbscan is not None
+        assert len(dbscan["points"]) == len(sample_df)
+        for point in dbscan["points"]:
+            assert set(point.keys()) == {"x", "y", "cluster"}
+
+    def test_dbscan_skipped_for_small_dataset(self, agent: MiningAgent) -> None:
+        df = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+        result = agent.run(context={"dataframe": df, "goal": "profile", "directives": {"computations": ["dbscan"]}})
+        assert result["dbscan"] is None
+
+    def test_dbscan_not_computed_unless_requested(self, agent: MiningAgent, sample_df) -> None:
+        result = agent.run(context={"dataframe": sample_df, "goal": "profile", "directives": {"computations": ["kmeans"]}})
+        assert result["dbscan"] is None
