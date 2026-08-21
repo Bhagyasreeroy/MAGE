@@ -347,6 +347,20 @@ export async function fetchSharedThread(rootRunId: string): Promise<unknown[]> {
   return apiFetch(`/analysis/shared/${rootRunId}`);
 }
 
+export interface KnowledgeSource {
+  source: string;
+  filename: string;
+  title: string;
+  doc_type: string;
+  section: string;
+  chunk_count: number;
+  content: string;
+}
+
+export async function fetchKnowledgeSources(): Promise<KnowledgeSource[]> {
+  return apiFetch<KnowledgeSource[]>("/analysis/knowledge-sources");
+}
+
 export async function fetchDatasets(): Promise<DatasetSummary[]> {
   return apiFetch<DatasetSummary[]>("/analysis/datasets", { auth: true });
 }

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.analysis_run import AnalysisRun
@@ -51,8 +51,8 @@ async def save_dataset(
     With no `parent_id`, this is a fresh upload: it becomes its own lineage
     root (`root_id = id`, `version = 1`). With a `parent_id`, this is a
     transform-produced version: it inherits the parent's `root_id` and gets
-    `version = parent.version + 1` — so "list every version of this
-    dataset" is a single `WHERE root_id = ...` query, never a recursive walk.
+    `version = max(existing_versions_for_root) + 1` — so "list every version of this
+    dataset" is a single `WHERE root_id = ...` query with strictly increasing version numbers.
     """
     new_id = str(uuid.uuid4())
     if parent_id is not None:
@@ -60,7 +60,15 @@ async def save_dataset(
         if parent is None:
             raise ValueError(f"Parent dataset {parent_id!r} not found.")
         root_id = parent.root_id
-        version = parent.version + 1
+        
+        # Calculate max version within the lineage root to ensure unique, monotonically increasing versions
+        max_version_res = await db.execute(
+            select(func.max(Dataset.version)).where(
+                Dataset.root_id == root_id, Dataset.user_id == user_id
+            )
+        )
+        current_max = max_version_res.scalar() or parent.version
+        version = current_max + 1
     else:
         root_id = new_id
         version = 1
@@ -132,7 +140,7 @@ async def list_versions(db: AsyncSession, user_id: str, root_id: str) -> list[Da
     result = await db.execute(
         select(Dataset)
         .where(Dataset.root_id == root_id, Dataset.user_id == user_id)
-        .order_by(Dataset.version.asc())
+        .order_by(Dataset.version.asc(), Dataset.created_at.asc())
     )
     return list(result.scalars().all())
 

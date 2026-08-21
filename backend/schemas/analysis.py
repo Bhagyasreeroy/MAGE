@@ -254,9 +254,12 @@ class KnowledgeSource(BaseModel):
     """A single document in the RAG knowledge base."""
 
     source: str = Field(..., description="Relative source path, e.g. 'knowledge_base/missing_values.md'.")
+    filename: str = Field(default="", description="Basename of the file, e.g. 'missing_values.md'.")
     title: str = Field(..., description="Document title.")
     doc_type: str = Field(default="", description="Document type/category, e.g. 'methodology'.")
+    section: str = Field(default="", description="Section category, e.g. 'data_quality'.")
     chunk_count: int = Field(..., description="Number of chunks this document was split into.")
+    content: str = Field(default="", description="Full raw markdown text of the document.")
 
 
 class RecommendationCard(BaseModel):
