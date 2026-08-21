@@ -58,7 +58,13 @@ COPY agents/ ./agents/
 COPY rag/ ./rag/
 COPY data_pipeline/ ./data_pipeline/
 
-# Create data directories
+# The RAG knowledge base and bundled sample datasets are read from disk at
+# runtime (KnowledgeBaseLoader, the /sample-datasets endpoint) — without this
+# the container boots fine but has nothing to ground recommendations in and
+# no sample datasets to offer, silently. faiss_index/chroma_db/uploads stay
+# runtime-created scratch space, not shipped in the image.
+COPY data/knowledge_base/ ./data/knowledge_base/
+COPY data/samples/ ./data/samples/
 RUN mkdir -p /app/data/faiss_index /app/data/chroma_db /app/uploads
 
 # Non-root user for security

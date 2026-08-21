@@ -24,6 +24,16 @@ COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# NEXT_PUBLIC_* vars are inlined into the client bundle at build time, not
+# read at container startup — a runtime-only env var here would leave every
+# browser request pointed at the api.ts fallback (localhost:8000), unreachable
+# from outside the container. Must be declared as a build ARG and exported to
+# the build's env so `npm run build` actually sees it. Railway (and `docker
+# build --build-arg`) forwards a matching service variable automatically once
+# the ARG exists — nothing else to configure on the platform side.
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
 RUN npm run build
 
 # ── Stage 3: Runner ───────────────────────────────────────────────────────────
