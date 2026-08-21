@@ -447,9 +447,42 @@ export default function AnalysisResultPage() {
 
         {/* Visualizations */}
         {(() => {
-          const vizOutput = result.steps.find((s) => s.agent_name === 'VisualizationAgent')?.output;
-          const specs = (vizOutput?.viz_specs as VizSpec[] | undefined) ?? [];
-          if (specs.length === 0) return null;
+          const vizStep = result.steps.find((s) => s.agent_name === 'VisualizationAgent');
+          const specs = (vizStep?.output?.viz_specs as VizSpec[] | undefined) ?? [];
+
+          // A chartless run gets a heading and a reason, not nothing.
+          //
+          // This section used to `return null` on an empty spec list, which
+          // removed it from the page entirely — so a run that legitimately
+          // produced no chart looked exactly like a backend that never
+          // answered at all. Both render as blank space where charts should
+          // be, and the reader has no way to tell a real result from a broken
+          // one. That ambiguity cost a debugging session on 21 Aug.
+          //
+          // The agent already explains itself: VisualizationAgent returns a
+          // `message` with every run ("No mining output or dataset available
+          // — visualization skipped." when Mining failed upstream, which is
+          // the case actually reachable today). Surface it rather than
+          // inventing wording here that could drift from what happened.
+          if (specs.length === 0) {
+            const reason = !vizStep
+              ? 'The visualization step did not run for this analysis.'
+              : vizStep.status !== 'success'
+                ? vizStep.observation || 'The visualization step did not complete.'
+                : ((vizStep.output?.message as string | undefined) ??
+                   'No chart suited this goal and this dataset.');
+
+            return (
+              <div className="mb-8">
+                <h3 className="text-xs font-bold text-navy/40 uppercase tracking-widest mb-3">Visualizations</h3>
+                <p className="text-navy/40 font-light text-sm">No charts for this run.</p>
+                {/* The agent's own message on its own line: it is a full
+                    sentence and often ends in an em-dash clause of its own,
+                    so joining it inline reads as a run-on. */}
+                <p className="text-[11px] text-navy/35 italic leading-relaxed font-light mt-1.5">{reason}</p>
+              </div>
+            );
+          }
 
           return (
             <div className="mb-8">
