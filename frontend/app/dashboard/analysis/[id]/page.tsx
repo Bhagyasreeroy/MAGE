@@ -410,7 +410,12 @@ export default function AnalysisResultPage() {
   return (
     <div className="max-w-4xl mx-auto pb-32">
       {/* ── Header ─────────────────────────────────────────────────── */}
-      <div className="flex items-start justify-between mb-10 animate-fade-in">
+      {/* relative z-30: `animate-fade-in` puts a transform on this row, which
+          creates its own stacking context. Without an explicit z-index here,
+          it stacks by DOM order against the next section's `animate-slide-up`
+          (same trick) — and loses, burying the Share popover regardless of
+          its own z-index. */}
+      <div className="relative z-30 flex items-start justify-between mb-10 animate-fade-in">
         <div>
           <div className="flex items-center gap-4 mb-3">
             <h1 className="font-[family-name:var(--font-serif)] text-4xl font-bold text-navy">
@@ -439,7 +444,7 @@ export default function AnalysisResultPage() {
               Share
             </button>
             {isShareOpen && (
-              <div className="absolute right-0 mt-2 w-80 bg-warm-white border border-dusty-rose/20 rounded-2xl shadow-lg shadow-navy/10 p-5 z-10 animate-fade-in">
+              <div className="absolute right-0 mt-2 w-80 bg-warm-white border border-dusty-rose/20 rounded-2xl shadow-lg shadow-navy/10 p-5 z-40 animate-fade-in">
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-sm font-bold text-navy">Share this conversation</p>
                   <button
