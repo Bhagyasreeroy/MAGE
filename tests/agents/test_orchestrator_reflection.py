@@ -182,39 +182,59 @@ class TestAllTriggersTogether:
 
 
 class TestEndToEndAdaptiveRun:
-    def test_a_dataset_with_a_near_random_target_produces_a_reflection_step(
+    def test_a_target_with_heavy_missingness_produces_a_reflection_step(
         self, orchestrator: OrchestratorAgent, tmp_path,
     ) -> None:
         """
-        A feature genuinely uncorrelated with a binary target should fit
-        poorly enough for GradientBoosting to score under the trust
-        threshold, causing a real, non-monkeypatched reflection.
+        A real, non-monkeypatched adaptive run: the whole point of the loop is
+        that the run's *shape* changes with the data, so this asserts a
+        reflection step exists rather than only checking consistency if one
+        happens to appear.
+
+        The trigger is target missingness, not a poorly-fitting model. Both
+        are genuine reflection causes, but only this one is deterministic:
+        completeness is arithmetic over the column, so a 50%-null target is
+        below LOW_TARGET_COMPLETENESS_PCT by construction. Judging a model's
+        fit on noise is not — GradientBoosting can overfit a small sample and
+        score above the trust threshold, which is why an earlier version of
+        this test guarded its assertions behind ``if "OrchestratorAgent" in
+        agent_names:`` and therefore passed just as happily when reflection
+        was disabled entirely.
         """
-        rng = np.random.default_rng(7)
         n = 200
+        churned = [float(i % 2) for i in range(n)]
+        # Exactly half the target is missing → 50.0% complete, deterministic.
+        for i in range(0, n, 2):
+            churned[i] = float("nan")
         df = pd.DataFrame(
             {
-                "feature_a": rng.normal(size=n),
-                "feature_b": rng.normal(size=n),
-                "target": rng.integers(0, 2, size=n),
+                "tenure": np.arange(n, dtype=float),
+                "spend": np.arange(n, dtype=float) * 1.5,
+                "churned": churned,
             }
         )
-        csv = tmp_path / "noise.csv"
+        csv = tmp_path / "missing_target.csv"
         df.to_csv(csv, index=False)
-        result = orchestrator.run(
-            goal="Predict target from feature_a and feature_b",
-            data={"source": str(csv)},
-        )
+
+        result = orchestrator.run(goal="Predict churned", data={"source": str(csv)})
 
         mining_step = next(s for s in result["steps"] if s["agent_name"] == "MiningAgent")
         assert mining_step["status"] == "success", "ingestion/mining must actually have run"
 
-        agent_names = [s["agent_name"] for s in result["steps"]]
-        if "OrchestratorAgent" in agent_names:
-            assert len(result["steps"]) > 4
-        # Not asserting the trigger always fires (GradientBoosting on noise
-        # can occasionally overfit a small n) — asserting the loop's shape is
-        # consistent whenever it does.
+        reflections = [s for s in result["steps"] if s["agent_name"] == "OrchestratorAgent"]
+        assert reflections, "a 50%-complete target must produce a reflection step"
+        assert len(result["steps"]) > 4, "an adaptive run is longer than the four planned steps"
+
+        # The step must name the real observation, not just exist.
+        assert any("churned" in s["reasoning"] for s in reflections)
+
+        # And the decision must reach the agent it was meant to change: the
+        # warning leads the recommendations rather than only being logged.
+        recs = next(
+            s for s in result["steps"] if s["agent_name"] == "RecommendationAgent"
+        )["output"]["recommendations"]
+        assert recs, "the run must still produce recommendations"
+        assert "churned" in recs[0]["text_technical"]
 
     def test_a_clean_run_still_produces_exactly_four_steps(
         self, orchestrator: OrchestratorAgent, tmp_path,
