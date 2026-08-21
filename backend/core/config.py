@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     frontend_url: str = "http://localhost:3000"
+    # Google's OAuth redirect target — must be this backend's own public URL
+    # and must match an "Authorized redirect URI" registered in Google Cloud
+    # Console exactly (scheme, host, and path). Defaults to local dev; set
+    # BACKEND_URL in any deployed environment or Google OAuth silently
+    # redirects back to a localhost nobody deployed can reach.
+    backend_url: str = "http://localhost:8000"
 
     # ── Database ───────────────────────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://mage:mage@localhost:5432/mage"

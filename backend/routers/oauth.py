@@ -42,7 +42,7 @@ async def google_login():
     if not settings.google_client_id:
         raise HTTPException(status_code=500, detail="Google OAuth not configured")
 
-    redirect_uri = f"http://localhost:8000/auth/google/callback"
+    redirect_uri = f"{settings.backend_url}/auth/google/callback"
 
     params = (
         f"client_id={settings.google_client_id}"
@@ -64,7 +64,7 @@ async def google_callback(code: str, db: AsyncSession = Depends(get_db)):
     3. Find or create the user in our DB.
     4. Issue a MAGE JWT and redirect to the frontend dashboard.
     """
-    redirect_uri = "http://localhost:8000/auth/google/callback"
+    redirect_uri = f"{settings.backend_url}/auth/google/callback"
 
     # ── Step 1: Exchange code for tokens ─────────────────────────────────
     async with httpx.AsyncClient() as client:
