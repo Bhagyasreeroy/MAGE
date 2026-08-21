@@ -38,6 +38,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from agents.temporal import detect_time_axis
+
 logger = logging.getLogger(__name__)
 
 # The phrase that identifies an attribution-derived pattern, defined here
@@ -60,6 +62,9 @@ ATTRIBUTION_PATTERN_MARKER = "' contributes most to predicting "
 # report a number that doesn't mean anything.
 MIN_NUMERIC_COLUMNS_FOR_PCA = 2
 MIN_ROWS_FOR_CLUSTERING = 10
+# A decomposition chart is unreadable past a few hundred points, and the JSON
+# payload grows with every one of them.
+MAX_DECOMPOSITION_POINTS = 400
 # Rows sampled when scoring a candidate clustering. `silhouette_score` computes
 # pairwise distances, so its cost is quadratic in the number of rows, and it is
 # evaluated once per candidate k — five quadratic passes over the full dataset.
@@ -173,6 +178,19 @@ class MiningAgent:
             self._compute_feature_attribution(df, numeric_cols, target_column)
             if "shap_attribution" in computations else {}
         )
+        # Strictly opt-in, and deliberately not routed through `wants()`.
+        #
+        # `wants()` returns True for everything on an unconditioned run, so
+        # going through it would make a standalone profile start fitting
+        # seasonal models on any dataset with a date column. More importantly,
+        # `computations_run` records what the plan *requested* rather than what
+        # produced a result — so a token requested on a dataset with no dates
+        # would be reported as having run. The orchestrator therefore asks for
+        # this only once ingestion has confirmed a time axis exists.
+        time_series = (
+            self._compute_time_series_decomposition(df, numeric_cols)
+            if "time_series_decomposition" in computations else {}
+        )
 
         patterns = self._build_patterns(
             correlations=correlations,
@@ -185,6 +203,7 @@ class MiningAgent:
             class_balance=class_balance,
             linearity=linearity,
             feature_attribution=feature_attribution,
+            time_series=time_series,
         )
 
         return {
@@ -199,6 +218,7 @@ class MiningAgent:
             "class_balance": class_balance,
             "linearity": linearity,
             "feature_attribution": feature_attribution,
+            "time_series": time_series,
             "patterns": patterns,
             "task_type": task_type,
             "computations_run": sorted(computations) if conditioned else ["<default profile>"],
@@ -220,6 +240,7 @@ class MiningAgent:
             "class_balance": {},
             "linearity": [],
             "feature_attribution": {},
+            "time_series": {},
             "patterns": [],
             "task_type": None,
             "computations_run": [],
@@ -681,6 +702,153 @@ class MiningAgent:
 
     # ── Pattern summaries (feed the RAG retrieval query) ─────────────────
 
+    # ── Time-series decomposition (M3) ────────────────────────────────────
+
+    # Median spacing → the seasonal period a reader would expect, and the words
+    # to justify it with. A decomposition is only as good as its assumed
+    # period, so the basis travels with the number.
+    _PERIOD_BY_SPACING: list[tuple[float, float, int, str]] = [
+        (0.9, 1.1, 7, "daily observations, weekly cycle"),
+        (6.5, 7.5, 4, "weekly observations, monthly cycle"),
+        (28.0, 31.0, 12, "monthly observations, yearly cycle"),
+        (88.0, 93.0, 4, "quarterly observations, yearly cycle"),
+        (360.0, 370.0, 2, "yearly observations"),
+    ]
+
+    def _compute_time_series_decomposition(
+        self, df: pd.DataFrame, numeric_cols: list[str],
+    ) -> dict[str, Any]:
+        """Split a series into trend, seasonal and residual components.
+
+        Every refusal returns a ``skipped`` reason rather than an empty dict or
+        an exception: "there is no time axis" and "the series is too short for
+        two full periods" are different facts about the data, and a reader who
+        gets neither cannot tell which happened.
+
+        Irregular spacing is resampled to the inferred frequency rather than
+        refused — gaps are ordinary in real series — but ``resampled`` records
+        that it happened, because the series shown is then not quite the series
+        uploaded.
+        """
+        axis = detect_time_axis(df)
+        if axis is None:
+            return {"skipped": "No time axis: no column parses as a sequence of dates."}
+
+        time_col, parsed = axis
+        candidates = [c for c in numeric_cols if c != time_col]
+        if not candidates:
+            return {"skipped": f"No numeric column to decompose against '{time_col}'."}
+
+        # The column with the most observations — a decomposition of a mostly
+        # empty column describes its gaps, not its seasonality.
+        column = max(candidates, key=lambda c: df[c].notna().sum())
+
+        series = (
+            pd.Series(df[column].to_numpy(), index=pd.DatetimeIndex(parsed))
+            .dropna()
+            .sort_index()
+        )
+        # Repeated timestamps are averaged, so the series stays single-valued.
+        series = series.groupby(level=0).mean()
+        if len(series) < 4:
+            return {"skipped": f"Only {len(series)} dated observation(s) of '{column}'."}
+
+        spacings = series.index.to_series().diff().dropna().dt.total_seconds() / 86400.0
+        median_days = float(spacings.median()) if not spacings.empty else 0.0
+        period, basis = self._period_for_spacing(median_days)
+        if period is None:
+            return {
+                "skipped": (
+                    f"Could not infer a seasonal period: observations of '{column}' are "
+                    f"spaced about {median_days:.1f} day(s) apart, which matches no "
+                    "common cycle."
+                )
+            }
+
+        # Regularise only when the spacing genuinely varies.
+        #
+        # Not "are all the gaps equal?" — calendar months are 28 to 31 days
+        # apart, so a perfectly regular monthly series has varying day-spacing
+        # and a strict equality test calls it irregular. Saying "your series
+        # was resampled" when nothing was touched is worse than saying nothing:
+        # it is a false statement about the reader's data.
+        #
+        # The test that matches the intent: does every gap imply the same
+        # seasonal period as the median gap? Calendar drift stays inside one
+        # band; a missing month does not.
+        resampled = ""
+        irregular = any(
+            self._period_for_spacing(float(gap))[0] != period for gap in spacings
+        )
+        if irregular:
+            freq = {7: "D", 4: "QS", 12: "MS", 2: "YS"}.get(period, "D")
+            if period == 4 and 6.5 <= median_days <= 7.5:
+                freq = "W"
+            before = len(series)
+            series = series.resample(freq).mean().interpolate(limit_direction="both")
+            resampled = (
+                f"Irregular spacing regularised to '{freq}' "
+                f"({before} observations in, {len(series)} out)."
+            )
+
+        if len(series) < 2 * period:
+            return {
+                "skipped": (
+                    f"Need at least two full periods ({2 * period} observations at "
+                    f"period {period}); '{column}' has {len(series)}."
+                )
+            }
+
+        try:
+            from statsmodels.tsa.seasonal import seasonal_decompose
+        except ImportError as exc:  # pragma: no cover - dependency is declared
+            logger.warning("statsmodels unavailable (%s); skipping decomposition.", exc)
+            return {"skipped": f"Seasonal decomposition unavailable ({exc})."}
+
+        try:
+            decomposed = seasonal_decompose(series, model="additive", period=period)
+        except Exception as exc:  # noqa: BLE001 - report, never break the pipeline
+            logger.warning("seasonal_decompose failed: %s", exc)
+            return {"skipped": f"Decomposition failed: {exc}"}
+
+        points = [
+            {
+                "t": ts.strftime("%Y-%m-%d"),
+                "observed": self._safe_float(observed),
+                "trend": self._safe_float(trend),
+                "seasonal": self._safe_float(seasonal),
+                "residual": self._safe_float(residual),
+            }
+            for ts, observed, trend, seasonal, residual in zip(
+                series.index, series.to_numpy(), decomposed.trend.to_numpy(),
+                decomposed.seasonal.to_numpy(), decomposed.resid.to_numpy(),
+            )
+        ][:MAX_DECOMPOSITION_POINTS]
+
+        seasonal_values = [p["seasonal"] for p in points if p["seasonal"] is not None]
+        return {
+            "column": column,
+            "time_column": time_col,
+            "period": period,
+            # Quoted the way SHAP quotes `method` and `model_score`: a reader
+            # who cannot see the assumed period cannot judge the result.
+            "period_basis": basis,
+            "model": "additive",
+            "observations": len(series),
+            "resampled": resampled,
+            "seasonal_amplitude": (
+                round(max(seasonal_values) - min(seasonal_values), 4) if seasonal_values else None
+            ),
+            "points": points,
+        }
+
+    def _period_for_spacing(self, median_days: float) -> tuple[int | None, str]:
+        """The seasonal period implied by the median gap between observations."""
+        for low, high, period, basis in self._PERIOD_BY_SPACING:
+            if low <= median_days <= high:
+                return period, basis
+        return None, ""
+
     def _build_patterns(
         self,
         correlations: dict[str, Any],
@@ -693,6 +861,7 @@ class MiningAgent:
         class_balance: dict[str, Any] | None = None,
         linearity: list[dict[str, Any]] | None = None,
         feature_attribution: dict[str, Any] | None = None,
+        time_series: dict[str, Any] | None = None,
     ) -> list[str]:
         patterns: list[str] = []
 
@@ -758,6 +927,22 @@ class MiningAgent:
                 f"'{feature_attribution['target']}' ({top['score']:.0%} of total attribution, "
                 f"via {feature_attribution['method']}, model score "
                 f"{feature_attribution['model_score']})."
+            )
+
+        if time_series and time_series.get("points"):
+            # The period and how it was inferred travel with the claim, for the
+            # same reason the attribution pattern carries its method and model
+            # score: a seasonal finding is only as good as its assumed period,
+            # and a reader who cannot see it cannot disagree with it.
+            amplitude = time_series.get("seasonal_amplitude")
+            amplitude_clause = (
+                f", seasonal swing of {amplitude:.4g}" if amplitude is not None else ""
+            )
+            patterns.append(
+                f"'{time_series['column']}' decomposes into trend, seasonal and residual "
+                f"components over '{time_series['time_column']}' with a period of "
+                f"{time_series['period']} ({time_series['period_basis']}){amplitude_clause}, "
+                f"via additive seasonal_decompose over {time_series['observations']} observations."
             )
 
         return patterns

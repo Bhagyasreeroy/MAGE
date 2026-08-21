@@ -54,6 +54,8 @@ from typing import Any
 
 import pandas as pd
 
+from agents.temporal import detect_time_axis
+
 logger = logging.getLogger(__name__)
 
 MAX_HISTOGRAMS = 3
@@ -192,6 +194,9 @@ class VisualizationAgent:
                 built = [spec] if spec else []
             elif chart in ("cluster_scatter",):
                 spec = self._cluster_scatter_spec(mining, directives)
+                built = [spec] if spec else []
+            elif chart == "seasonal_decomposition":
+                spec = self._seasonal_decomposition_spec(mining)
                 built = [spec] if spec else []
             elif chart == "pairplot":
                 spec = self._pairplot_spec(df, mining) or self._cluster_scatter_spec(mining, directives)
@@ -619,6 +624,37 @@ class VisualizationAgent:
             "groups": groups,
         }
 
+    def _seasonal_decomposition_spec(self, mining: dict[str, Any]) -> dict[str, Any] | None:
+        """Trend, seasonal and residual as three stacked panels (B1 / M3).
+
+        Its own chart type rather than an extra series on `line`, because the
+        three components have genuinely different scales: a residual sits
+        around zero while the observed series may be in the hundreds. One
+        y-axis would flatten the residual to a flat line; two y-axes would be a
+        dual-axis chart, which is worse. Small multiples with a shared time
+        axis is the form that fits.
+
+        The period travels in the title for the same reason MiningAgent quotes
+        it in the pattern — a decomposition is only as good as its assumed
+        period, and a reader who cannot see it cannot disagree with it.
+        """
+        ts = mining.get("time_series") or {}
+        if not ts.get("points"):
+            return None
+
+        return {
+            "type": "seasonal_decomposition",
+            "title": (
+                f"Seasonal decomposition of '{ts['column']}' "
+                f"(period {ts['period']} — {ts['period_basis']})"
+            ),
+            "points": ts["points"],
+            "period": ts["period"],
+            "x_label": ts.get("time_column"),
+            "y_label": ts.get("column"),
+            "resampled": ts.get("resampled", ""),
+        }
+
     def _pairplot_spec(self, df: pd.DataFrame, mining: dict[str, Any]) -> dict[str, Any] | None:
         """
         Every pairwise scatter over the top numeric columns.
@@ -757,38 +793,14 @@ class VisualizationAgent:
         return None
 
     def _datetime_series(self, df: pd.DataFrame) -> tuple[str, pd.Series] | None:
+        """The dataset's time axis, if it has one.
+
+        Delegates to `agents.temporal.detect_time_axis`, which MiningAgent and
+        the orchestrator also use — Mining to decide whether a decomposition is
+        possible, the orchestrator to decide whether to ask for one. Kept as a
+        method so existing call sites and tests are unaffected.
         """
-        The dataset's time axis, if it has one.
-
-        Parsed datetime columns are taken as-is. Text columns are *also*
-        considered, because that is what a CSV upload actually delivers — the
-        ingestion layer does not infer date dtypes, so a datetime64-only check
-        would mean the trend chart never fires outside hand-built test frames.
-
-        The guard against reading category codes as dates is a minimum string
-        length: "2026-01-04" and "04/01/2026" clear it, "3" does not.
-        """
-        for col in df.columns:
-            if pd.api.types.is_datetime64_any_dtype(df[col]):
-                return col, df[col]
-
-        for col in df.columns:
-            series = df[col].dropna()
-            if series.empty or not (
-                pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col])
-            ):
-                continue
-            text = series.astype(str)
-            if float(text.str.len().median()) < _MIN_DATE_TEXT_LENGTH:
-                continue
-            try:
-                parsed = pd.to_datetime(text, errors="coerce", format="mixed")
-            except Exception:  # noqa: BLE001 - an unparseable column is simply not the axis
-                continue
-            if parsed.notna().mean() < _MIN_DATE_PARSE_RATIO or parsed.nunique() < 3:
-                continue
-            return col, parsed.reindex(df.index)
-        return None
+        return detect_time_axis(df)
 
     def _line_spec(self, df: pd.DataFrame, mining: dict[str, Any]) -> dict[str, Any] | None:
         """

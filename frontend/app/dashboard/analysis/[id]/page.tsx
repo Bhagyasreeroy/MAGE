@@ -20,6 +20,7 @@ import {
   Histogram,
   LineChart,
   Pairplot,
+  SeasonalDecomposition,
   ScatterPlot,
   Violin,
 } from '../../../components/charts';
@@ -585,6 +586,7 @@ export default function AnalysisResultPage() {
                     spec.type === 'cluster_scatter' ||
                     spec.type === 'scatter' ||
                     spec.type === 'pairplot' ||
+                    spec.type === 'seasonal_decomposition' ||
                     spec.type === 'line';
                   return (
                   <div
@@ -656,6 +658,20 @@ export default function AnalysisResultPage() {
                             max: number;
                           }[]
                         }
+                      />
+                    )}
+                    {spec.type === 'seasonal_decomposition' && (
+                      <SeasonalDecomposition
+                        points={spec.points as {
+                          t: string;
+                          observed: number | null;
+                          trend: number | null;
+                          seasonal: number | null;
+                          residual: number | null;
+                        }[]}
+                        xLabel={spec.x_label as string | undefined}
+                        yLabel={spec.y_label as string | undefined}
+                        resampled={spec.resampled as string | undefined}
                       />
                     )}
                     {spec.type === 'pairplot' && (

@@ -530,3 +530,171 @@ export function ClusterScatter({ points }: { points: { x: number; y: number; clu
     </svg>
   );
 }
+
+// Panel geometry, shared by every decomposition panel so the three stack in
+// register against one time axis.
+const DECOMP_W = 600;
+const DECOMP_H = 90;
+
+/** One panel of a decomposition. Declared at module scope: defining it inside
+ *  the parent's render would rebuild the component type on every render and
+ *  reset its subtree. */
+function DecompositionPanel({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] font-bold text-navy/40 uppercase tracking-widest">{label}</p>
+      <svg
+        viewBox={`0 0 ${DECOMP_W} ${DECOMP_H}`}
+        className="w-full h-24 bg-cream/40 rounded-xl mt-1"
+        role="img"
+      >
+        {children}
+      </svg>
+    </div>
+  );
+}
+
+type DecompositionPoint = {
+  t: string;
+  observed: number | null;
+  trend: number | null;
+  seasonal: number | null;
+  residual: number | null;
+};
+
+/**
+ * Seasonal decomposition as three stacked panels sharing one time axis.
+ *
+ * Small multiples rather than one plot, because the components have genuinely
+ * different scales: a residual sits around zero while the observed series may
+ * be in the hundreds. Sharing a y-axis would flatten the residual to a
+ * straight line; giving them separate y-axes on the same plot would be a
+ * dual-axis chart, which is worse than either.
+ *
+ * `trend` and `residual` are undefined for the first and last half-period —
+ * seasonal_decompose has no window there — so the line is *broken* at those
+ * points rather than drawn through zero, which would invent a downward spike
+ * at both ends of every chart.
+ */
+export function SeasonalDecomposition({
+  points,
+  xLabel,
+  yLabel,
+  resampled,
+}: {
+  points: DecompositionPoint[];
+  xLabel?: string;
+  yLabel?: string;
+  resampled?: string;
+}) {
+  if (points.length < 2) return <p className="text-xs text-navy/40">Not enough points to decompose.</p>;
+
+  // One path per contiguous run of defined values, so gaps stay gaps.
+  const pathFor = (values: (number | null)[], min: number, range: number) => {
+    const runs: string[] = [];
+    let current: string[] = [];
+    values.forEach((v, i) => {
+      if (v === null || Number.isNaN(v)) {
+        if (current.length > 1) runs.push(current.join(' '));
+        current = [];
+        return;
+      }
+      const x = (i / (values.length - 1)) * DECOMP_W;
+      const y = DECOMP_H - ((v - min) / range) * (DECOMP_H - 12) - 6;
+      current.push(`${current.length === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`);
+    });
+    if (current.length > 1) runs.push(current.join(' '));
+    return runs;
+  };
+
+  const extent = (values: (number | null)[]) => {
+    const nums = values.filter((v): v is number => v !== null && !Number.isNaN(v));
+    if (!nums.length) return { min: 0, range: 1 };
+    const min = Math.min(...nums);
+    return { min, range: Math.max(...nums) - min || 1 };
+  };
+
+  const observed = points.map((p) => p.observed);
+  const trend = points.map((p) => p.trend);
+  const seasonal = points.map((p) => p.seasonal);
+  const residual = points.map((p) => p.residual);
+
+  // Panel 1 shares one scale across observed and trend — they are the same
+  // quantity, so a common scale is the whole point of overlaying them.
+  const topNums = [...observed, ...trend].filter((v): v is number => v !== null && !Number.isNaN(v));
+  const topMin = Math.min(...topNums);
+  const topRange = Math.max(...topNums) - topMin || 1;
+
+  const seasonalExtent = extent(seasonal);
+  const residualExtent = extent(residual);
+  const zeroY = (min: number, range: number) =>
+    DECOMP_H - ((0 - min) / range) * (DECOMP_H - 12) - 6;
+
+  return (
+    <div className="w-full min-w-0 space-y-3">
+      {/* Two series in one panel, so identity is never carried by colour
+          alone — and the lighter series sits just under 3:1 against the
+          surface, which obliges a visible label rather than a bare hue. */}
+      <div className="flex items-center gap-4">
+        <span className="flex items-center gap-1.5 text-[10px] text-navy/50">
+          <svg width="14" height="4" aria-hidden="true">
+            <line x1="0" y1="2" x2="14" y2="2" stroke={SERIES_COLORS[1]} strokeWidth="2" />
+          </svg>
+          Observed
+        </span>
+        <span className="flex items-center gap-1.5 text-[10px] text-navy/50">
+          <svg width="14" height="4" aria-hidden="true">
+            <line x1="0" y1="2" x2="14" y2="2" stroke={SERIES_COLORS[0]} strokeWidth="2" />
+          </svg>
+          Trend
+        </span>
+      </div>
+
+      <DecompositionPanel label={yLabel ? `Observed & trend — ${yLabel}` : 'Observed & trend'}>
+        {pathFor(observed, topMin, topRange).map((d, i) => (
+          <path key={`o${i}`} d={d} fill="none" stroke={SERIES_COLORS[1]} strokeWidth="2"
+                vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+        ))}
+        {pathFor(trend, topMin, topRange).map((d, i) => (
+          <path key={`t${i}`} d={d} fill="none" stroke={SERIES_COLORS[0]} strokeWidth="2"
+                vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+        ))}
+      </DecompositionPanel>
+
+      <DecompositionPanel label="Seasonal">
+        <line x1="0" y1={zeroY(seasonalExtent.min, seasonalExtent.range)} x2={DECOMP_W}
+              y2={zeroY(seasonalExtent.min, seasonalExtent.range)}
+              stroke="currentColor" className="text-navy/10" strokeWidth="1"
+              vectorEffect="non-scaling-stroke" />
+        {pathFor(seasonal, seasonalExtent.min, seasonalExtent.range).map((d, i) => (
+          <path key={`s${i}`} d={d} fill="none" stroke={SERIES_COLORS[2]} strokeWidth="2"
+                vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+        ))}
+      </DecompositionPanel>
+
+      <DecompositionPanel label="Residual">
+        <line x1="0" y1={zeroY(residualExtent.min, residualExtent.range)} x2={DECOMP_W}
+              y2={zeroY(residualExtent.min, residualExtent.range)}
+              stroke="currentColor" className="text-navy/10" strokeWidth="1"
+              vectorEffect="non-scaling-stroke" />
+        {pathFor(residual, residualExtent.min, residualExtent.range).map((d, i) => (
+          <path key={`r${i}`} d={d} fill="none" stroke={SERIES_COLORS[4]} strokeWidth="2"
+                vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+        ))}
+      </DecompositionPanel>
+
+      <div className="flex justify-between text-[10px] text-navy/40 font-mono">
+        <span>{points[0].t.slice(0, 10)}</span>
+        <span className="text-navy/30">{xLabel}</span>
+        <span>{points[points.length - 1].t.slice(0, 10)}</span>
+      </div>
+      {resampled && <p className="text-[10px] text-navy/35 italic">{resampled}</p>}
+    </div>
+  );
+}
