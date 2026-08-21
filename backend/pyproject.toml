@@ -38,6 +38,7 @@ dependencies = [
     "pdfplumber>=0.11.0",       # PDF table extraction (M1 ingestion)
     "duckdb>=1.0.0",            # sandboxed SQL-over-DataFrame query console
     "slowapi>=0.1.9",           # M8 application-level rate limiting
+    "statsmodels>=0.14.0",      # M3 seasonal_decompose (B1 time-series)
     # SHAP feature attribution (M6 explainability, Objective 5). Pulls numba,
     # which pins numpy<2.5 — the stack is verified green at numpy 2.4.x. If it
     # ever has to be dropped, MiningAgent falls back to permutation importance

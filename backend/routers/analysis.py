@@ -119,6 +119,11 @@ _SAMPLE_DATASET_REGISTRY: dict[str, tuple[str, str]] = {
         "60 orders across 2 customer segments — clean correlation (units × price → "
         "revenue), a few injected outliers, and a churn label for classification goals.",
     ),
+    "monthly_bookings.csv": (
+        "Monthly Bookings",
+        "72 months of bookings with a rising trend and a clear yearly cycle — the "
+        "dataset for temporal goals, where a seasonal decomposition applies.",
+    ),
     "saas_customers.csv": (
         "SaaS Customers",
         "150 SaaS subscription customers across 3 tiers — real cluster structure, "

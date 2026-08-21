@@ -32,6 +32,7 @@ from agents.ingestion_agent import IngestionAgent
 from agents.mining_agent import MiningAgent
 from agents.planner import INGESTION, MINING, RECOMMENDATION, VISUALIZATION, PipelinePlanner
 from agents.recommendation_agent import RecommendationAgent
+from agents.temporal import detect_time_axis
 from agents.visualization_agent import VisualizationAgent
 from backend.schemas.analysis import GoalClassification, TaskType
 
@@ -267,10 +268,12 @@ class OrchestratorAgent:
             # Condition the agent: inject this step's directives (and, for
             # mining, the target column detected from the ingested schema).
             directives = dict(planned.directives)
-            if planned.agent_name == MINING and not directives.get("target_column"):
-                detected = context.get("detected_target_column")
-                if detected:
-                    directives["target_column"] = detected
+            if planned.agent_name == MINING:
+                if not directives.get("target_column"):
+                    detected = context.get("detected_target_column")
+                    if detected:
+                        directives["target_column"] = detected
+                directives = self._add_temporal_directive(directives, classification, context)
             # Visualization and Recommendation additionally read whatever the
             # post-Mining reflection decided (see _reflect_on_mining) — empty
             # unless a reflection step actually fired for this run.
@@ -322,6 +325,47 @@ class OrchestratorAgent:
         return self._aggregate(goal, expertise_level, mode, classification, steps, context)
 
     # ── Internal helpers ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _add_temporal_directive(
+        directives: dict[str, Any], classification: GoalClassification, context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Ask for a seasonal decomposition only when the data can support one.
+
+        Schema-aware conditioning, decided here rather than in
+        `PipelinePlanner.build_plan` for the plain reason that the plan is built
+        before IngestionAgent runs — there is no schema to consult yet. This is
+        the same point at which the orchestrator already refines the target
+        column from the real ingested columns.
+
+        Two conditions, and both matter:
+
+        * **A time axis exists.** `computations_run` records what the plan
+          *requested*, not what produced a result, so a token requested on a
+          dataset with no dates would be reported as having run — on iris,
+          wine and breast_cancer among others. That would either drop the
+          evaluation's precision or force an edit to the hand-labelled
+          relevance set in the direction that raises MAGE's own score, which
+          `evaluation/metrics.py` warns against in its own change log.
+        * **The goal is a reporting goal.** A time axis makes a decomposition
+          possible; the goal is what makes it relevant. A clustering run has
+          not asked to be told about seasonality, and answering questions
+          nobody asked is the behaviour this project exists to argue against.
+        """
+        if classification.task_type != TaskType.reporting:
+            return directives
+
+        df = context.get("dataframe")
+        if df is None or getattr(df, "empty", True):
+            return directives
+        if detect_time_axis(df) is None:
+            return directives
+
+        computations = list(directives.get("computations", []) or [])
+        if "time_series_decomposition" not in computations:
+            computations.append("time_series_decomposition")
+        logger.info("Time axis detected; requesting a seasonal decomposition.")
+        return {**directives, "computations": computations}
 
     def _reflect_on_mining(
         self, mining_output: dict[str, Any], context: dict[str, Any], target_column: str | None,

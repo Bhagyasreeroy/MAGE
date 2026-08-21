@@ -101,6 +101,11 @@ _VIZ_DIRECTIVES: dict[TaskType, dict[str, Any]] = {
         "charts": [
             "histograms", "missingness_matrix", "correlation_heatmap",
             "feature_importance", "box", "grouped_bar", "violin", "line",
+            # Degrades to nothing unless MiningAgent actually produced a
+            # decomposition, which only happens when the orchestrator saw a
+            # time axis and asked for one. Listing it here costs a reporting
+            # run nothing when the data has no dates.
+            "seasonal_decomposition",
         ]
     },
 }
