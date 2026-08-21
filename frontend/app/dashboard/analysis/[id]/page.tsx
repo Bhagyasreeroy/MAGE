@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   authFetchFormData,
   downloadAuthenticatedFile,
@@ -17,6 +18,7 @@ import {
   BarChart,
   BoxByClass,
   BoxPlot,
+  type ChartSize,
   ClusterScatter,
   CorrelationHeatmap,
   GroupedBar,
@@ -256,6 +258,139 @@ function formatReply(data: AnalysisResult, mode: 'rag' | 'llm'): string {
 }
 
 /**
+ * The chart itself, for one spec — shared between the grid card and the
+ * click-to-enlarge modal so the two never drift into rendering different
+ * things for the same spec. `size` is the only thing that differs between
+ * the two call sites.
+ */
+function renderChartBody(spec: VizSpec, size: ChartSize) {
+  switch (spec.type) {
+    case 'histogram':
+      return <Histogram bins={spec.bins as { label: string; count: number }[]} size={size} />;
+    case 'bar':
+      return <BarChart items={spec.items as { label: string; value: number }[]} size={size} />;
+    case 'feature_importance':
+      return (
+        <BarChart
+          items={spec.items as { label: string; value: number }[]}
+          valueLabel="PCA loading"
+          size={size}
+        />
+      );
+    case 'missingness_matrix':
+      return (
+        <BarChart items={spec.items as { label: string; value: number }[]} valueLabel="% missing" size={size} />
+      );
+    case 'scatter':
+      return (
+        <ScatterPlot
+          points={spec.points as { x: number; y: number }[]}
+          xLabel={spec.x_label as string | undefined}
+          yLabel={spec.y_label as string | undefined}
+          size={size}
+        />
+      );
+    case 'boxplot':
+      return (
+        <BoxPlot
+          min={spec.min as number | null}
+          q1={spec.q1 as number | null}
+          median={spec.median as number | null}
+          q3={spec.q3 as number | null}
+          max={spec.max as number | null}
+          size={size}
+        />
+      );
+    case 'correlation_heatmap':
+      return (
+        <CorrelationHeatmap columns={spec.columns as string[]} matrix={spec.matrix as (number | null)[][]} size={size} />
+      );
+    case 'cluster_scatter':
+      return <ClusterScatter points={spec.points as { x: number; y: number; cluster: number }[]} size={size} />;
+    case 'grouped_bar':
+      return (
+        <GroupedBar
+          categories={spec.categories as string[]}
+          series={spec.series as { name: string; values: number[] }[]}
+          groupLabel={spec.group_label as string | undefined}
+          size={size}
+        />
+      );
+    case 'box_by_class':
+      return (
+        <BoxByClass
+          groups={
+            spec.groups as {
+              label: string;
+              count: number;
+              min: number;
+              q1: number;
+              median: number;
+              q3: number;
+              max: number;
+            }[]
+          }
+          size={size}
+        />
+      );
+    case 'pairplot':
+      return (
+        <Pairplot
+          pairs={
+            spec.pairs as {
+              x_label: string;
+              y_label: string;
+              r: number;
+              points: { x: number; y: number }[];
+            }[]
+          }
+          size={size}
+        />
+      );
+    case 'highlighted_scatter':
+      return (
+        <HighlightedScatter
+          points={spec.points as { x: number; y: number; outlier?: boolean }[]}
+          xLabel={spec.x_label as string | undefined}
+          yLabel={spec.y_label as string | undefined}
+          size={size}
+        />
+      );
+    case 'violin':
+      return (
+        <Violin
+          bands={spec.bands as { center: number; count: number; width: number }[]}
+          median={spec.median as number | null | undefined}
+          size={size}
+        />
+      );
+    case 'line':
+      return (
+        <LineChart
+          points={spec.points as { x: string; y: number }[]}
+          xLabel={spec.x_label as string | undefined}
+          yLabel={spec.y_label as string | undefined}
+          size={size}
+        />
+      );
+    default:
+      return null;
+  }
+}
+
+const ExpandIcon = () => (
+  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 8V4m0 0h4M4 4l5 5m11-5v4m0-4h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
+  </svg>
+);
+
+const CloseIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+  </svg>
+);
+
+/**
  * One grounded recommendation, with its parts laid out as parts.
  *
  * A RAG answer is two different things joined: a finding computed from the
@@ -328,6 +463,16 @@ export default function AnalysisResultPage() {
   const [isSharing, setIsSharing] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [enlargedChartIdx, setEnlargedChartIdx] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (enlargedChartIdx === null) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setEnlargedChartIdx(null);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [enlargedChartIdx]);
 
   useEffect(() => {
     let cancelled = false;
@@ -735,113 +880,70 @@ export default function AnalysisResultPage() {
                     spec.type === 'pairplot' ||
                     spec.type === 'line';
                   return (
-                  <div
-                    key={idx}
-                    className={`bg-cream/40 border border-dusty-rose/15 rounded-2xl p-5 min-w-0 overflow-hidden ${isWide ? 'md:col-span-2' : ''}`}
-                  >
-                    <p className="text-xs font-bold text-navy mb-3">{spec.title}</p>
-                    {spec.type === 'histogram' && <Histogram bins={spec.bins as { label: string; count: number }[]} />}
-                    {(spec.type === 'bar' || spec.type === 'feature_importance' || spec.type === 'missingness_matrix') && (
-                      <BarChart items={spec.items as { label: string; value: number }[]} />
-                    )}
-                    {spec.type === 'feature_importance' && (() => {
-                      const items = spec.items as { label: string; value: number }[];
-                      const top = items[0];
-                      if (!top) return null;
-                      return (
-                        <ExplainButton
-                          finding={`'${top.label}' has the highest feature importance (PCA loading ${top.value}).`}
-                          goal={result.goal}
-                        />
-                      );
-                    })()}
-                    {spec.type === 'scatter' && (
-                      <ScatterPlot
-                        points={spec.points as { x: number; y: number }[]}
-                        xLabel={spec.x_label as string | undefined}
-                        yLabel={spec.y_label as string | undefined}
-                      />
-                    )}
-                    {spec.type === 'boxplot' && (
-                      <BoxPlot
-                        min={spec.min as number | null}
-                        q1={spec.q1 as number | null}
-                        median={spec.median as number | null}
-                        q3={spec.q3 as number | null}
-                        max={spec.max as number | null}
-                      />
-                    )}
-                    {spec.type === 'correlation_heatmap' && (
-                      <CorrelationHeatmap
-                        columns={spec.columns as string[]}
-                        matrix={spec.matrix as (number | null)[][]}
-                      />
-                    )}
-                    {spec.type === 'cluster_scatter' && (
-                      <ClusterScatter points={spec.points as { x: number; y: number; cluster: number }[]} />
-                    )}
-                    {/* `scatter` and `missingness_matrix` are handled above —
-                        both were dispatched independently on this branch and on
-                        integration/combined-features, which is why the fix
-                        appears once rather than twice. */}
-                    {spec.type === 'grouped_bar' && (
-                      <GroupedBar
-                        categories={spec.categories as string[]}
-                        series={spec.series as { name: string; values: number[] }[]}
-                        groupLabel={spec.group_label as string | undefined}
-                      />
-                    )}
-                    {spec.type === 'box_by_class' && (
-                      <BoxByClass
-                        groups={
-                          spec.groups as {
-                            label: string;
-                            count: number;
-                            min: number;
-                            q1: number;
-                            median: number;
-                            q3: number;
-                            max: number;
-                          }[]
+                    <div
+                      key={idx}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setEnlargedChartIdx(idx)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setEnlargedChartIdx(idx);
                         }
-                      />
-                    )}
-                    {spec.type === 'pairplot' && (
-                      <Pairplot
-                        pairs={
-                          spec.pairs as {
-                            x_label: string;
-                            y_label: string;
-                            r: number;
-                            points: { x: number; y: number }[];
-                          }[]
-                        }
-                      />
-                    )}
-                    {spec.type === 'highlighted_scatter' && (
-                      <HighlightedScatter
-                        points={spec.points as { x: number; y: number; outlier?: boolean }[]}
-                        xLabel={spec.x_label as string | undefined}
-                        yLabel={spec.y_label as string | undefined}
-                      />
-                    )}
-                    {spec.type === 'violin' && (
-                      <Violin
-                        bands={spec.bands as { center: number; count: number; width: number }[]}
-                        median={spec.median as number | null | undefined}
-                      />
-                    )}
-                    {spec.type === 'line' && (
-                      <LineChart
-                        points={spec.points as { x: string; y: number }[]}
-                        xLabel={spec.x_label as string | undefined}
-                        yLabel={spec.y_label as string | undefined}
-                      />
-                    )}
-                  </div>
+                      }}
+                      className={`text-left bg-cream/40 border border-dusty-rose/15 rounded-2xl p-5 min-w-0 overflow-hidden hover:border-dusty-rose/40 hover:shadow-md hover:shadow-navy/5 transition-all cursor-zoom-in group ${isWide ? 'md:col-span-2' : ''}`}
+                    >
+                      <div className="flex items-start justify-between gap-2 mb-3">
+                        <p className="text-xs font-bold text-navy">{spec.title}</p>
+                        <span className="text-navy/25 group-hover:text-navy/50 transition-colors shrink-0 mt-0.5">
+                          <ExpandIcon />
+                        </span>
+                      </div>
+                      {renderChartBody(spec, 'default')}
+                      {spec.type === 'feature_importance' && (() => {
+                        const items = spec.items as { label: string; value: number }[];
+                        const top = items[0];
+                        if (!top) return null;
+                        return (
+                          <div onClick={(e) => e.stopPropagation()}>
+                            <ExplainButton
+                              finding={`'${top.label}' has the highest feature importance (PCA loading ${top.value}).`}
+                              goal={result.goal}
+                            />
+                          </div>
+                        );
+                      })()}
+                    </div>
                   );
                 })}
               </div>
+
+              {enlargedChartIdx !== null && specs[enlargedChartIdx] && typeof document !== 'undefined' &&
+                createPortal(
+                  <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-navy/60 backdrop-blur-sm p-4 md:p-10"
+                    onClick={() => setEnlargedChartIdx(null)}
+                  >
+                    <div
+                      className="bg-cream rounded-2xl border border-dusty-rose/20 p-6 max-w-4xl w-full max-h-full overflow-auto shadow-xl"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="flex items-start justify-between gap-4 mb-4">
+                        <p className="text-sm font-bold text-navy">{specs[enlargedChartIdx].title}</p>
+                        <button
+                          type="button"
+                          onClick={() => setEnlargedChartIdx(null)}
+                          className="text-navy/40 hover:text-navy transition-colors shrink-0"
+                          aria-label="Close"
+                        >
+                          <CloseIcon />
+                        </button>
+                      </div>
+                      {renderChartBody(specs[enlargedChartIdx], 'large')}
+                    </div>
+                  </div>,
+                  document.body
+                )}
             </div>
           );
         })()}

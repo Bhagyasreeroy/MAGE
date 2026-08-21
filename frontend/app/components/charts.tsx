@@ -16,11 +16,21 @@ interface HistogramBin {
 const SERIES_COLORS = ['#22223b', '#9a8c98', '#4a4e69', '#c9ada7', '#6d6875', '#b5838d'];
 const OUTLIER_COLOR = '#c73e1d';
 
-export function Histogram({ bins }: { bins: HistogramBin[] }) {
+/** Every chart accepts this — 'large' is what the click-to-enlarge modal
+ *  renders with, so a reader can actually make out individual points/bars
+ *  instead of squinting at a card sized for a two-column grid. */
+export type ChartSize = 'default' | 'large';
+
+function sizeClass(defaultCls: string, largeCls: string, size: ChartSize = 'default'): string {
+  return size === 'large' ? largeCls : defaultCls;
+}
+
+export function Histogram({ bins, size = 'default' }: { bins: HistogramBin[]; size?: ChartSize }) {
   const max = Math.max(1, ...bins.map((b) => b.count));
   return (
     <div className="w-full min-w-0">
-      <div className="flex items-end gap-1 h-56">
+      {size === 'large' && <p className="text-[10px] text-navy/35 mb-1">↑ count</p>}
+      <div className={`flex items-end gap-1 ${sizeClass('h-56', 'h-96', size)}`}>
         {bins.map((bin, i) => (
           <div key={i} className="flex-1 min-w-0 flex flex-col items-center justify-end h-full group relative">
             <div
@@ -47,16 +57,25 @@ export function Histogram({ bins }: { bins: HistogramBin[] }) {
   );
 }
 
-export function BarChart({ items }: { items: { label: string; value: number }[] }) {
+export function BarChart({
+  items,
+  valueLabel,
+  size = 'default',
+}: {
+  items: { label: string; value: number }[];
+  valueLabel?: string;
+  size?: ChartSize;
+}) {
   const max = Math.max(1e-9, ...items.map((i) => Math.abs(i.value)));
   return (
-    <div className="space-y-3 w-full min-w-0">
+    <div className={`w-full min-w-0 ${sizeClass('space-y-3', 'space-y-4', size)}`}>
+      {valueLabel && <p className="text-[10px] text-navy/35">{valueLabel} →</p>}
       {items.map((item, i) => (
-        <div key={i} className="flex items-center gap-3 text-sm">
-          <span className="w-32 shrink-0 truncate text-navy/60" title={item.label}>
+        <div key={i} className={`flex items-center gap-3 ${sizeClass('text-sm', 'text-base', size)}`}>
+          <span className={`shrink-0 truncate text-navy/60 ${sizeClass('w-32', 'w-48', size)}`} title={item.label}>
             {item.label}
           </span>
-          <div className="flex-1 min-w-0 bg-cream-dark/50 rounded-full h-4 overflow-hidden">
+          <div className={`flex-1 min-w-0 bg-cream-dark/50 rounded-full overflow-hidden ${sizeClass('h-4', 'h-6', size)}`}>
             <div
               className="bg-navy/70 h-full rounded-full"
               style={{ width: `${(Math.abs(item.value) / max) * 100}%` }}
@@ -77,6 +96,7 @@ export function BoxPlot({
   median,
   q3,
   max,
+  size = 'default',
 }: {
   min: number | null;
   q1: number | null;
@@ -84,6 +104,7 @@ export function BoxPlot({
   q3: number | null;
   max: number | null;
   outlierBounds?: [number | null, number | null] | null;
+  size?: ChartSize;
 }) {
   if (min == null || q1 == null || median == null || q3 == null || max == null) {
     return <p className="text-xs text-navy/40">Not enough data for a box plot.</p>;
@@ -112,7 +133,7 @@ export function BoxPlot({
 
   return (
     <div className="py-4 w-full min-w-0">
-      <svg viewBox="0 0 100 20" className="w-full h-20" preserveAspectRatio="none">
+      <svg viewBox="0 0 100 20" className={`w-full ${sizeClass('h-20', 'h-36', size)}`} preserveAspectRatio="none">
         <line x1={pct(domainMin)} y1="10" x2={pct(domainMax)} y2="10" stroke="#9a8c98" strokeWidth="0.5" />
         <rect x={pct(q1)} y="4" width={Math.max(0.5, pct(q3) - pct(q1))} height="12" fill="#22223b" opacity="0.7" />
         <line x1={pct(median)} y1="2" x2={pct(median)} y2="18" stroke="#f2e9e4" strokeWidth="0.8" />
@@ -140,7 +161,15 @@ export function BoxPlot({
   );
 }
 
-export function CorrelationHeatmap({ columns, matrix }: { columns: string[]; matrix: (number | null)[][] }) {
+export function CorrelationHeatmap({
+  columns,
+  matrix,
+  size = 'default',
+}: {
+  columns: string[];
+  matrix: (number | null)[][];
+  size?: ChartSize;
+}) {
   const cellColor = (v: number | null) => {
     if (v == null) return '#e5e5e5';
     const intensity = Math.min(1, Math.abs(v));
@@ -148,10 +177,11 @@ export function CorrelationHeatmap({ columns, matrix }: { columns: string[]; mat
       ? `rgba(34, 34, 59, ${intensity})` // navy
       : `rgba(199, 62, 29, ${intensity})`; // dusty-rose-ish
   };
+  const cellCls = sizeClass('w-12 h-12', 'w-16 h-16 text-sm', size);
 
   return (
     <div className="w-full min-w-0 overflow-x-auto">
-      <table className="text-xs border-collapse">
+      <table className={sizeClass('text-xs', 'text-sm', size) + ' border-collapse'}>
         <thead>
           <tr>
             <th className="p-1" />
@@ -169,7 +199,7 @@ export function CorrelationHeatmap({ columns, matrix }: { columns: string[]; mat
               {matrix[i].map((v, j) => (
                 <td
                   key={j}
-                  className="w-12 h-12 text-center text-white font-mono"
+                  className={`text-center text-white font-mono ${cellCls}`}
                   style={{ backgroundColor: cellColor(v) }}
                   title={`${row} × ${columns[j]}: ${v?.toFixed(2) ?? 'n/a'}`}
                 >
@@ -188,15 +218,20 @@ export function GroupedBar({
   categories,
   series,
   groupLabel,
+  valueLabel,
+  size = 'default',
 }: {
   categories: string[];
   series: { name: string; values: number[] }[];
   groupLabel?: string;
+  valueLabel?: string;
+  size?: ChartSize;
 }) {
   const max = Math.max(1, ...series.flatMap((s) => s.values));
   return (
     <div className="w-full min-w-0">
-      <div className="flex items-end gap-3 h-56">
+      {size === 'large' && <p className="text-[10px] text-navy/35 mb-1">↑ {valueLabel || 'count'}</p>}
+      <div className={`flex items-end gap-3 ${sizeClass('h-56', 'h-96', size)}`}>
         {categories.map((category, ci) => (
           <div key={ci} className="flex-1 min-w-0 flex items-end justify-center gap-0.5 h-full">
             {series.map((s, si) => (
@@ -240,8 +275,10 @@ export function GroupedBar({
 
 export function BoxByClass({
   groups,
+  size = 'default',
 }: {
   groups: { label: string; count: number; min: number; q1: number; median: number; q3: number; max: number }[];
+  size?: ChartSize;
 }) {
   if (groups.length === 0) return <p className="text-xs text-navy/40">No class groups to compare.</p>;
   // One shared scale across classes — per-class scales would make every box
@@ -258,7 +295,7 @@ export function BoxByClass({
           <span className="w-20 shrink-0 truncate text-xs text-navy/60" title={g.label}>
             {g.label}
           </span>
-          <svg viewBox="0 0 100 12" className="flex-1 min-w-0 h-8" preserveAspectRatio="none">
+          <svg viewBox="0 0 100 12" className={`flex-1 min-w-0 ${sizeClass('h-8', 'h-14', size)}`} preserveAspectRatio="none">
             <line x1={pct(g.min)} y1="6" x2={pct(g.max)} y2="6" stroke="#9a8c98" strokeWidth="0.4" />
             <rect
               x={pct(g.q1)}
@@ -283,11 +320,13 @@ export function BoxByClass({
 
 export function Pairplot({
   pairs,
+  size = 'default',
 }: {
   pairs: { x_label: string; y_label: string; r: number; points: { x: number; y: number }[] }[];
+  size?: ChartSize;
 }) {
   return (
-    <div className="grid grid-cols-2 gap-3 w-full min-w-0">
+    <div className={size === 'large' ? 'grid grid-cols-2 gap-6 w-full min-w-0' : 'grid grid-cols-2 gap-3 w-full min-w-0'}>
       {pairs.map((pair, i) => {
         // Scale to the 2nd-98th percentile, not min-max. A handful of extreme
         // values (exactly what a planted outlier looks like) otherwise own the
@@ -309,7 +348,10 @@ export function Pairplot({
         const clamp = (v: number) => Math.min(1, Math.max(0, v));
         return (
           <div key={i} className="min-w-0">
-            <svg viewBox="0 0 100 100" className="w-full h-28 bg-cream/40 rounded-lg">
+            <svg
+              viewBox="0 0 100 100"
+              className={`w-full bg-cream/40 rounded-lg ${sizeClass('h-28', 'h-64', size)}`}
+            >
               {pair.points.map((p, j) => (
                 <circle
                   key={j}
@@ -321,6 +363,12 @@ export function Pairplot({
                 />
               ))}
             </svg>
+            {size === 'large' && (
+              <div className="flex justify-between text-[9px] text-navy/35 font-mono mt-1">
+                <span>{pair.x_label}: {minX.toFixed(1)}–{(minX + rangeX).toFixed(1)}</span>
+                <span>{pair.y_label}: {minY.toFixed(1)}–{(minY + rangeY).toFixed(1)}</span>
+              </div>
+            )}
             <p className="text-[9px] text-navy/40 mt-1 truncate" title={`${pair.x_label} × ${pair.y_label}`}>
               {pair.x_label} × {pair.y_label}{' '}
               <span className="font-mono text-navy/30">r={pair.r.toFixed(2)}</span>
@@ -336,10 +384,12 @@ export function HighlightedScatter({
   points,
   xLabel,
   yLabel,
+  size = 'default',
 }: {
   points: { x: number; y: number; outlier?: boolean }[];
   xLabel?: string;
   yLabel?: string;
+  size?: ChartSize;
 }) {
   if (points.length === 0) return <p className="text-xs text-navy/40">No points to plot.</p>;
   const xs = points.map((p) => p.x);
@@ -352,7 +402,7 @@ export function HighlightedScatter({
 
   return (
     <div className="w-full min-w-0">
-      <svg viewBox="0 0 100 100" className="w-full h-72 bg-cream/40 rounded-xl">
+      <svg viewBox="0 0 100 100" className={`w-full bg-cream/40 rounded-xl ${sizeClass('h-72', 'h-[32rem]', size)}`}>
         {/* Normal points first so the flagged ones are never painted over. */}
         {points.map((p, i) =>
           p.outlier ? null : (
@@ -381,12 +431,22 @@ export function HighlightedScatter({
         )}
       </svg>
       <div className="flex justify-between items-center text-[10px] text-navy/40 mt-2">
-        <span>{xLabel && yLabel ? `${xLabel} × ${yLabel}` : ''}</span>
+        <span>
+          {xLabel ? `${xLabel} →` : ''}
+          {xLabel && yLabel ? '  ·  ' : ''}
+          {yLabel ? `↑ ${yLabel}` : ''}
+        </span>
         <span className="flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-full" style={{ backgroundColor: OUTLIER_COLOR }} />
           {flagged} outlier{flagged === 1 ? '' : 's'}
         </span>
       </div>
+      {size === 'large' && (
+        <div className="flex justify-between text-[9px] text-navy/30 font-mono mt-1">
+          <span>x: {minX.toFixed(1)}–{(minX + rangeX).toFixed(1)}</span>
+          <span>y: {minY.toFixed(1)}–{(minY + rangeY).toFixed(1)}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -394,16 +454,18 @@ export function HighlightedScatter({
 export function Violin({
   bands,
   median,
+  size = 'default',
 }: {
   bands: { center: number; count: number; width: number }[];
   median?: number | null;
+  size?: ChartSize;
 }) {
   if (bands.length === 0) return <p className="text-xs text-navy/40">No distribution to show.</p>;
   return (
     <div className="w-full min-w-0 py-2">
       {/* Bands run low-to-high bottom-up and are centred, so the silhouette
           mirrors about the axis the way a violin does. */}
-      <div className="flex flex-col-reverse items-center justify-center h-56 gap-px">
+      <div className={`flex flex-col-reverse items-center justify-center gap-px ${sizeClass('h-56', 'h-96', size)}`}>
         {bands.map((band, i) => (
           <div
             key={i}
@@ -431,10 +493,12 @@ export function LineChart({
   points,
   xLabel,
   yLabel,
+  size = 'default',
 }: {
   points: { x: string; y: number }[];
   xLabel?: string;
   yLabel?: string;
+  size?: ChartSize;
 }) {
   if (points.length < 2) return <p className="text-xs text-navy/40">Not enough points for a trend.</p>;
   const ys = points.map((p) => p.y);
@@ -448,7 +512,16 @@ export function LineChart({
 
   return (
     <div className="w-full min-w-0">
-      <svg viewBox="0 0 100 100" className="w-full h-64 bg-cream/40 rounded-xl" preserveAspectRatio="none">
+      {size === 'large' && (
+        <p className="text-[10px] text-navy/35 mb-1">
+          ↑ {yLabel || 'value'} (range {minY.toFixed(1)}–{(minY + rangeY).toFixed(1)})
+        </p>
+      )}
+      <svg
+        viewBox="0 0 100 100"
+        className={`w-full bg-cream/40 rounded-xl ${sizeClass('h-64', 'h-[28rem]', size)}`}
+        preserveAspectRatio="none"
+      >
         <polyline points={coords.join(' ')} fill="none" stroke={SERIES_COLORS[0]} strokeWidth="0.8" />
       </svg>
       <div className="flex justify-between text-[10px] text-navy/40 font-mono mt-2">
@@ -467,10 +540,12 @@ export function ScatterPlot({
   points,
   xLabel,
   yLabel,
+  size = 'default',
 }: {
   points: { x: number; y: number }[];
   xLabel?: string;
   yLabel?: string;
+  size?: ChartSize;
 }) {
   if (points.length === 0) {
     return <p className="text-xs text-navy/40">Not enough data for a scatter plot.</p>;
@@ -484,7 +559,10 @@ export function ScatterPlot({
 
   return (
     <div className="w-full min-w-0">
-      <svg viewBox="0 0 100 100" className="w-full h-80 max-w-full bg-cream/40 rounded-xl">
+      <svg
+        viewBox="0 0 100 100"
+        className={`w-full max-w-full bg-cream/40 rounded-xl ${sizeClass('h-80', 'h-[32rem]', size)}`}
+      >
         {points.map((p, i) => (
           <circle
             key={i}
@@ -502,11 +580,23 @@ export function ScatterPlot({
           <span>{xLabel ? `${xLabel} →` : ''}</span>
         </div>
       )}
+      {size === 'large' && (
+        <div className="flex justify-between text-[9px] text-navy/30 font-mono mt-1">
+          <span>x: {minX.toFixed(1)}–{maxX.toFixed(1)}</span>
+          <span>y: {minY.toFixed(1)}–{maxY.toFixed(1)}</span>
+        </div>
+      )}
     </div>
   );
 }
 
-export function ClusterScatter({ points }: { points: { x: number; y: number; cluster: number }[] }) {
+export function ClusterScatter({
+  points,
+  size = 'default',
+}: {
+  points: { x: number; y: number; cluster: number }[];
+  size?: ChartSize;
+}) {
   const xs = points.map((p) => p.x);
   const ys = points.map((p) => p.y);
   const [minX, maxX] = [Math.min(...xs), Math.max(...xs)];
@@ -514,19 +604,54 @@ export function ClusterScatter({ points }: { points: { x: number; y: number; clu
   const rangeX = maxX - minX || 1;
   const rangeY = maxY - minY || 1;
   const colors = ['#22223b', '#9a8c98', '#c9ada7', '#4a4e69', '#f2e9e4', '#c73e1d'];
+  // -1 is DBSCAN's own convention for a noise point — every other backend
+  // (KMeans) numbers clusters 0..k. Both feed this component, so it's
+  // labelled generically here rather than baking in a clustering-method name.
+  const clusterIds = [...new Set(points.map((p) => p.cluster))].sort((a, b) => a - b);
 
   return (
-    <svg viewBox="0 0 100 100" className="w-full h-80 max-w-full bg-cream/40 rounded-xl">
-      {points.map((p, i) => (
-        <circle
-          key={i}
-          cx={((p.x - minX) / rangeX) * 90 + 5}
-          cy={90 - ((p.y - minY) / rangeY) * 90 + 5}
-          r="1.2"
-          fill={colors[p.cluster % colors.length]}
-          opacity="0.75"
-        />
-      ))}
-    </svg>
+    <div className="w-full min-w-0">
+      {/* The two axes are the dataset's numeric columns projected down to 2D
+          via PCA — there's no single original column to name, so the
+          components are what's actually being plotted (labelled below). */}
+      <svg
+        viewBox="0 0 100 100"
+        className={`w-full max-w-full bg-cream/40 rounded-xl ${sizeClass('h-80', 'h-[32rem]', size)}`}
+      >
+        {points.map((p, i) => (
+          <circle
+            key={i}
+            cx={((p.x - minX) / rangeX) * 90 + 5}
+            cy={90 - ((p.y - minY) / rangeY) * 90 + 5}
+            r="1.2"
+            fill={p.cluster === -1 ? '#c73e1d' : colors[p.cluster % colors.length]}
+            opacity="0.75"
+          >
+            <title>{p.cluster === -1 ? 'noise' : `cluster ${p.cluster}`}</title>
+          </circle>
+        ))}
+      </svg>
+      <div className="flex justify-between text-[10px] text-navy/40 mt-1.5">
+        <span>↑ PC2</span>
+        <span>PC1 →</span>
+      </div>
+      <div className="flex flex-wrap gap-3 mt-2">
+        {clusterIds.map((id) => (
+          <span key={id} className="flex items-center gap-1.5 text-[10px] text-navy/50">
+            <span
+              className="w-2.5 h-2.5 rounded-full shrink-0"
+              style={{ backgroundColor: id === -1 ? '#c73e1d' : colors[id % colors.length] }}
+            />
+            {id === -1 ? 'noise' : `cluster ${id}`}
+          </span>
+        ))}
+      </div>
+      {size === 'large' && (
+        <div className="flex justify-between text-[9px] text-navy/30 font-mono mt-1">
+          <span>PC1: {minX.toFixed(2)}–{maxX.toFixed(2)}</span>
+          <span>PC2: {minY.toFixed(2)}–{maxY.toFixed(2)}</span>
+        </div>
+      )}
+    </div>
   );
 }
