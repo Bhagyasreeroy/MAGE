@@ -407,6 +407,19 @@ class RecommendationAgent:
             recommendations.append(
                 {
                     "insight": hit["metadata"].get("title", hit["source"]),
+                    # The finding and the guidance, kept apart.
+                    #
+                    # The `text_*` fields below concatenate them, because
+                    # exports, history persistence and the flattened
+                    # `AnalysisResponse.recommendations` all read those. But a
+                    # reader needs to see which half is *their data* and which
+                    # half is *the methodology*, and once concatenated the
+                    # frontend cannot tell them apart to style them
+                    # differently. So both forms travel.
+                    "finding": pattern,
+                    "guidance_technical": _clean_technical(hit["text"]),
+                    "guidance_analyst": _analyst(hit["text"], hit["metadata"].get("title", "")),
+                    "guidance_plain": _simplify(hit["text"]),
                     # Blank line between the finding and the chunk — joining
                     # with a plain space would put the chunk's own leading
                     # "# Heading" mid-line, where Markdown can't recognize
@@ -434,6 +447,15 @@ class RecommendationAgent:
                 recommendations.append(
                     {
                         "insight": hit["metadata"].get("title", hit["source"]),
+                        # No dataset pattern led to this one (the goal-only
+                        # path the follow-up chat uses), so there is no finding
+                        # to lead with. Explicitly None rather than an empty
+                        # string: the card renders a heading-and-guidance
+                        # layout instead of pretending it found something.
+                        "finding": None,
+                        "guidance_technical": _clean_technical(hit["text"]),
+                        "guidance_analyst": _analyst(hit["text"], hit["metadata"].get("title", "")),
+                        "guidance_plain": _simplify(hit["text"]),
                         "text_technical": _clean_technical(hit["text"]),
                         "text_analyst": _analyst(hit["text"], hit["metadata"].get("title", "")),
                         "text_plain": _simplify(hit["text"]),

@@ -203,6 +203,11 @@ class OrchestratorService:
                 )
 
         recommendations = raw_result.get("recommendations", [])
+        # Presentation only — deliberately not persisted with the run. The
+        # flattened `recommendations` remains the stored form, so history and
+        # exports keep one source of truth and old runs need no migration;
+        # cards are rebuilt from it on replay.
+        recommendation_cards = raw_result.get("recommendation_cards", [])
         rag_sources = raw_result.get("rag_sources", [])
         summary = raw_result.get("summary", "")
 
@@ -231,6 +236,7 @@ class OrchestratorService:
             classification=raw_result.get("classification"),
             steps=steps,
             recommendations=recommendations,
+            recommendation_cards=recommendation_cards,
             rag_sources=rag_sources,
             summary=summary,
             dataset_id=resolved_dataset_id,

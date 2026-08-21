@@ -54,6 +54,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.explain_agent import ExplainAgent
 from agents.ingestion_agent import IngestionAgent
+from agents.orchestrator import build_recommendation_cards
 from backend.core.database import async_session, get_db
 from backend.core.rate_limit import (
     analysis_limit,
@@ -548,11 +549,22 @@ async def get_history_run(
     db: AsyncSession = Depends(get_db),
 ) -> AnalysisResponse:
     run = await _get_owned_run(run_id, current_user, db)
+    # Cards are rebuilt here rather than stored. The structured
+    # recommendations already live inside the persisted RecommendationAgent
+    # step output, so a second stored copy would mean two sources of truth and
+    # a migration for existing rows. Rebuilding also means the report page —
+    # which always loads a run through this endpoint, never the POST response —
+    # gets cards for runs recorded before they existed.
+    recommendation_step = next(
+        (s for s in (run.steps or []) if s.get("agent_name") == "RecommendationAgent"), None
+    )
+    structured = ((recommendation_step or {}).get("output") or {}).get("recommendations", [])
     return AnalysisResponse(
         goal=run.goal,
         expertise_level=run.expertise_level,
         steps=run.steps,
         recommendations=run.recommendations,
+        recommendation_cards=build_recommendation_cards(structured, run.expertise_level),
         rag_sources=run.rag_sources,
         summary=run.summary,
         dataset_id=run.dataset_id,

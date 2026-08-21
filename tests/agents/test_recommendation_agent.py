@@ -59,8 +59,15 @@ class TestRecommendationAgent:
         result = agent.run(context={"goal": "How do I detect outliers in a numeric column?"})
         rec = result["recommendations"][0]
 
+        # Kept as an exact set, not a subset check. It caught the addition of
+        # the `finding`/`guidance_*` fields, which is what a contract test is
+        # for — loosening it to `>=` would silently accept the next change too.
         assert set(rec.keys()) == {
-            "insight", "text_technical", "text_analyst", "text_plain", "confidence", "sources",
+            "insight",
+            "finding",
+            "guidance_technical", "guidance_analyst", "guidance_plain",
+            "text_technical", "text_analyst", "text_plain",
+            "confidence", "sources",
         }
         assert isinstance(rec["confidence"], float)
         assert 0.0 <= rec["confidence"] <= 1.0
