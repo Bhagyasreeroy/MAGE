@@ -58,7 +58,14 @@ _KEYWORDS: dict[TaskType, list[tuple[str, float]]] = {
     TaskType.regression: [
         ("forecast", 3.0), ("regression", 3.0), ("estimate", 2.0), ("how much", 2.0),
         ("project", 1.5), ("continuous", 1.5), ("revenue", 1.0), ("sales amount", 1.5),
-        ("price", 1.0), ("predict revenue", 3.0), ("predict sales", 3.0),
+        # "prices" alongside "price": the lexicon spells plurals out elsewhere
+        # ("outlier"/"outliers", "segment"/"segments") and simply missed this
+        # one, so "predict house prices" matched nothing and fell to a 0.41
+        # embedding guess. Harmless before F1, because the guess was returned
+        # anyway and happened to be right; after F1 it would turn a correct
+        # regression answer into a general report.
+        ("price", 1.0), ("prices", 1.0),
+        ("predict revenue", 3.0), ("predict sales", 3.0),
         ("predict price", 3.0), ("predict the amount", 3.0),
     ],
     TaskType.classification: [
@@ -78,6 +85,22 @@ _KEYWORDS: dict[TaskType, list[tuple[str, float]]] = {
         ("describe", 2.0), ("summarize", 2.0), ("summary", 2.0), ("overview", 2.0),
         ("explore", 2.0), ("understand", 1.5), ("profile", 2.0), ("distribution", 1.5),
         ("report", 2.0), ("what does the data", 1.5), ("general analysis", 2.0),
+        # Temporal vocabulary. None of this existed anywhere in the lexicon, so
+        # a goal like "how do passengers change month over month" matched no
+        # rule at all and was left to the embedding provider, which returned
+        # `clustering` at 0.19.
+        #
+        # It belongs to `reporting` because there is no time-series TaskType:
+        # reporting already emits the `line` chart, so a temporal goal produces
+        # the right artefact with no new computation. B1's decomposition work
+        # is what would claim this vocabulary for a task type of its own.
+        #
+        # Deliberately excluded: "forecast", which is temporal but is already a
+        # 3.0-weight regression keyword. Predicting a future value is a
+        # regression goal whatever its time axis.
+        ("trend", 2.0), ("trends", 2.0), ("over time", 2.5), ("time series", 2.5),
+        ("seasonality", 2.5), ("seasonal", 2.0), ("month over month", 2.5),
+        ("year over year", 2.5), ("timeline", 1.5), ("historical", 1.5),
     ],
 }
 
@@ -284,12 +307,36 @@ class GoalClassifier:
                 )
                 return result
 
+        # Nothing cleared the floor. Return the goal-agnostic default and say
+        # why, rather than presenting a sub-threshold guess as a decision —
+        # which is what returning `best` unconditionally used to do, making
+        # INCONCLUSIVE_BELOW a constant that never caused anything to be
+        # treated as inconclusive.
+        #
+        # Note where this actually bites: RuleBasedProvider scores
+        # `0.55 + 0.4 * share`, so a keyword match cannot fall below 0.55 and
+        # is above the floor by construction. This path is reached only when no
+        # keyword matched at all *and* the embedding provider's guess is weak —
+        # which is the honest reading of "we do not know".
+        rejected = ""
         if best is not None:
-            return best
+            rejected = (
+                f" Closest guess was '{best.task_type.value}' at "
+                f"{best.confidence:.2f}, below the {INCONCLUSIVE_BELOW} floor."
+            )
+            logger.info(
+                "Goal inconclusive: best was %s at %.2f (< %.2f); defaulting to %s.",
+                best.task_type.value, best.confidence, INCONCLUSIVE_BELOW, DEFAULT_TASK_TYPE.value,
+            )
 
         return GoalClassification(
             task_type=DEFAULT_TASK_TYPE,
-            target_column=_find_target_column(goal, columns),
+            # The target is read off the goal text, not inferred from the task
+            # type, so the fallback has no reason to lose it.
+            target_column=(
+                (best.target_column if best is not None else None)
+                or _find_target_column(goal, columns)
+            ),
             confidence=0.3,
-            rationale="No confident task-type signal; defaulting to a general report.",
+            rationale="No confident task-type signal; defaulting to a general report." + rejected,
         )
