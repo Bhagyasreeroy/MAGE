@@ -58,6 +58,10 @@ export default function NewAnalysisPage() {
   const [sampleDatasetId, setSampleDatasetId] = useState<string | null>(null);
   const [loadingSample, setLoadingSample] = useState<string | null>(null);
 
+  // Either source satisfies the run: freshly-chosen file bytes, or the id of
+  // a sample already persisted server-side.
+  const hasDataset = file !== null || sampleDatasetId !== null;
+
   const stream = useAnalysisStream();
   const isRunning = isUploading || stream.phase === 'connecting' || stream.phase === 'running';
 
@@ -288,10 +292,20 @@ export default function NewAnalysisPage() {
         )}
 
         {/* Submit */}
+        {/* A run needs a dataset as much as it needs a goal. The API refuses a
+            run with neither (422 from MissingDataSourceError), so this only
+            stops the pointless round-trip and says which input is missing —
+            the API check is the real guard, since this button is not the only
+            way in. */}
+        {!hasDataset && goal.trim().length >= 5 && (
+          <p className="text-navy/40 font-light text-sm text-center -mt-4">
+            Upload a dataset or pick a sample above to run this analysis.
+          </p>
+        )}
         <button
           id="run-analysis-btn"
           type="submit"
-          disabled={isRunning || stream.phase === 'complete' || goal.trim().length < 5}
+          disabled={isRunning || stream.phase === 'complete' || goal.trim().length < 5 || !hasDataset}
           className="w-full bg-navy text-cream font-semibold py-5 rounded-[2rem] hover:bg-navy-light disabled:opacity-50 disabled:cursor-not-allowed transition-all hover:-translate-y-1 shadow-xl shadow-navy/15 flex items-center justify-center gap-3 text-base"
         >
           {isRunning || stream.phase === 'complete' ? (
