@@ -99,7 +99,7 @@ from backend.services import analysis_run_service, dataset_service, export_servi
 from backend.services.orchestrator_service import MissingDataSourceError, OrchestratorService
 from data_pipeline.ingestion import IngestionError
 from data_pipeline.processing import ProcessingError
-from rag.knowledge_loader import KnowledgeBaseLoader
+from rag.knowledge_loader import KnowledgeBaseLoader, _parse_frontmatter
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -411,20 +411,30 @@ async def _close_quietly(websocket: WebSocket) -> None:
     summary="List documents in the RAG knowledge base",
 )
 async def list_knowledge_sources() -> list[KnowledgeSource]:
-    """Return the real EDA methodology documents the RecommendationAgent grounds on."""
-    chunks = KnowledgeBaseLoader().load_all()
-    by_source: dict[str, KnowledgeSource] = {}
-    for chunk in chunks:
-        source = chunk["source"]
-        if source not in by_source:
-            by_source[source] = KnowledgeSource(
-                source=source,
-                title=chunk["metadata"].get("title", source),
-                doc_type=chunk["metadata"].get("doc_type", ""),
-                chunk_count=0,
+    """Return the real EDA methodology documents the RecommendationAgent grounds on, including full content for inspection."""
+    loader = KnowledgeBaseLoader()
+    kb_dir = loader.kb_dir
+    sources: list[KnowledgeSource] = []
+
+    if kb_dir.exists():
+        for path in sorted(kb_dir.glob("*.md")):
+            raw = path.read_text(encoding="utf-8")
+            frontmatter, body = _parse_frontmatter(raw)
+            title = frontmatter.get("title", path.stem.replace("_", " ").title())
+            file_chunks = loader.load_file(path)
+            
+            sources.append(
+                KnowledgeSource(
+                    source=f"knowledge_base/{path.name}",
+                    filename=path.name,
+                    title=title,
+                    doc_type=frontmatter.get("doc_type", "methodology"),
+                    section=frontmatter.get("section", ""),
+                    chunk_count=len(file_chunks),
+                    content=raw,
+                )
             )
-        by_source[source].chunk_count += 1
-    return list(by_source.values())
+    return sources
 
 
 @router.post(

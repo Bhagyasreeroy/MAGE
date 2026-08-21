@@ -50,9 +50,6 @@ export default function SignInPage() {
           <div className="absolute bottom-20 right-10 w-[300px] h-[300px] bg-peach/10 rounded-full blur-[80px] animate-drift delay-1000" />
         </div>
         <div className="relative z-10 text-center">
-          <div className="flex justify-center mb-8">
-            <LogoIcon />
-          </div>
           <h2 className="font-[family-name:var(--font-serif)] text-5xl font-bold text-cream mb-6">
             MAGE
           </h2>
@@ -67,11 +64,6 @@ export default function SignInPage() {
         <div className="w-full max-w-md animate-fade-in">
           {/* Mobile logo */}
           <div className="lg:hidden text-center mb-10">
-            <div className="flex justify-center text-navy mb-4">
-              <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5" />
-              </svg>
-            </div>
             <h1 className="font-[family-name:var(--font-serif)] text-3xl font-bold text-navy">MAGE</h1>
           </div>
 

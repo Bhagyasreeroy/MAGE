@@ -101,7 +101,6 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         {/* Logo */}
         <div className="px-6 py-7 border-b border-white/5">
           <Link href="/" className="flex items-center gap-3">
-            <LogoIcon />
             <span className="font-[family-name:var(--font-serif)] text-xl font-bold text-cream tracking-tight">
               MAGE
             </span>
@@ -166,18 +165,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         {/* Top bar */}
         <header className="sticky top-0 z-20 bg-cream/80 backdrop-blur-xl border-b border-dusty-rose/10 px-8 py-4 flex items-center justify-between">
           <div />
-          <div className="flex items-center gap-4">
-            <button className="w-10 h-10 bg-warm-white/60 border border-dusty-rose/20 rounded-xl flex items-center justify-center text-navy/60 hover:text-navy hover:bg-warm-white hover:border-dusty-rose/40 transition-all">
-              <BellIcon />
-            </button>
-            <Link
-              href="/dashboard/analysis/new"
-              className="bg-navy text-cream text-sm font-medium px-5 py-2.5 rounded-xl hover:bg-navy-light transition-all hover:-translate-y-0.5 shadow-md shadow-navy/10 flex items-center gap-2"
-            >
-              <AnalysisIcon />
-              New Analysis
-            </Link>
-          </div>
+          <div className="flex items-center gap-4" />
         </header>
 
         {/* Page Content */}

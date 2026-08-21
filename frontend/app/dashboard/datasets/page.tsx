@@ -204,12 +204,6 @@ export default function DatasetsPage() {
                   >
                     Open
                   </Link>
-                  <Link
-                    href="/dashboard/analysis/new"
-                    className="text-xs font-medium text-navy/50 hover:text-navy bg-cream-dark/50 px-4 py-2 rounded-xl transition-colors"
-                  >
-                    Analyze
-                  </Link>
                   <button
                     onClick={() => removeDataset(ds.id)}
                     className="text-xs font-medium text-dusty-rose hover:text-red-500 bg-dusty-rose/10 px-4 py-2 rounded-xl transition-colors ml-auto"

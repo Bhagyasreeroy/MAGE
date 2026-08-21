@@ -48,9 +48,6 @@ export default function SharedConversationPage() {
     <div className="min-h-screen bg-cream">
       <header className="border-b border-dusty-rose/15 bg-warm-white/80 backdrop-blur-sm">
         <div className="max-w-3xl mx-auto px-6 py-5 flex items-center gap-3">
-          <div className="w-10 h-10 bg-navy rounded-xl flex items-center justify-center">
-            <LogoIcon />
-          </div>
           <span className="font-[family-name:var(--font-serif)] text-xl font-bold text-navy">MAGE</span>
           <span className="text-navy/40 font-light text-sm ml-1">Shared analysis</span>
         </div>

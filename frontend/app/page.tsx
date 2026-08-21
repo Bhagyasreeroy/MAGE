@@ -10,7 +10,7 @@ const FEATURES = [
       </svg>
     ),
     title: 'Upload Your Data',
-    description: 'Drag & drop CSV, JSON, or Parquet files. MAGE handles the rest.',
+    description: 'Drop CSV, TSV, JSON, Parquet, Excel (XLSX/XLS), or PDF files — 7 formats supported out of the box.',
   },
   {
     icon: (
@@ -44,7 +44,6 @@ const FEATURES = [
 const STATS = [
   { value: '4', label: 'Specialist Agents' },
   { value: '3', label: 'Expertise Levels' },
-  { value: '∞', label: 'Data Formats' },
   { value: 'RAG', label: 'Grounded' },
 ];
 
@@ -71,7 +70,6 @@ export default function LandingPage() {
       {/* ── Nav ────────────────────────────────────────────────────────── */}
       <nav className="relative z-20 flex items-center justify-between max-w-7xl mx-auto px-8 py-8">
         <Link href="/" className="flex items-center gap-3">
-          <LogoIcon />
           <span className="font-[family-name:var(--font-serif)] text-2xl font-bold text-navy tracking-tight">
             MAGE
           </span>
@@ -139,7 +137,7 @@ export default function LandingPage() {
 
       {/* ── Stats Row ──────────────────────────────────────────────────── */}
       <section className="relative z-10 max-w-4xl mx-auto px-8 mb-28">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {STATS.map((stat, idx) => (
             <div
               key={stat.label}
@@ -211,7 +209,6 @@ export default function LandingPage() {
       <footer className="relative z-10 bg-navy text-cream/50 py-16">
         <div className="max-w-5xl mx-auto px-8 flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-3 text-cream">
-            <LogoIcon />
             <span className="font-[family-name:var(--font-serif)] font-bold text-lg">MAGE</span>
           </div>
           <p className="text-sm font-light">Multi-Agent Goal-conditioned EDA</p>
