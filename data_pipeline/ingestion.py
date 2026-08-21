@@ -15,6 +15,7 @@ IngestionAgent uses it to route without the caller having to specify a type.
 from __future__ import annotations
 
 import csv
+import re
 import io
 import logging
 from pathlib import Path
@@ -25,6 +26,36 @@ import pandas as pd
 from fastapi import UploadFile
 
 logger = logging.getLogger(__name__)
+
+# Delimiters the sniffer is allowed to consider, and the same list the
+# post-failure fallback searches for. One definition, so the two cannot drift.
+_CANDIDATE_DELIMITERS = [",", ";", "\t", "|"]
+
+# pandas reports ragged rows as e.g.
+#   "Error tokenizing data. C error: Expected 3 fields in line 5, saw 4"
+_RAGGED_ROW_RE = re.compile(
+    r"Expected (\d+) fields in line (\d+), saw (\d+)", re.IGNORECASE
+)
+
+
+def _describe_parser_error(exc: Exception) -> str:
+    """Turn a pandas tokenizing error into something a reader can act on.
+
+    The common case by far is ragged rows, and pandas already knows exactly
+    which line and how many fields it found — that detail just never reached
+    the user, who saw a delimiter complaint about a file whose delimiter was
+    fine. Anything unrecognised is passed through rather than guessed at.
+    """
+    match = _RAGGED_ROW_RE.search(str(exc))
+    if match:
+        expected, line, saw = match.group(1), match.group(2), match.group(3)
+        return (
+            f"Inconsistent row length: line {line} has {saw} fields, but the "
+            f"header declares {expected}. Every row must have the same number "
+            f"of fields as the header."
+        )
+    return f"Failed to parse delimited file: {exc}"
+
 
 
 class IngestionError(Exception):
@@ -159,17 +190,50 @@ class DataIngestionEngine:
             try:
                 sample_lines = "\n".join(sample_text.splitlines()[:20])
                 sniffer = csv.Sniffer()
-                dialect = sniffer.sniff(sample_lines, delimiters=[",", ";", "\t", "|"])
+                dialect = sniffer.sniff(sample_lines, delimiters=_CANDIDATE_DELIMITERS)
                 sep = dialect.delimiter
-            except csv.Error as exc:
-                raise IngestionError(f"Delimiter detection failure: {exc}") from exc
+            except csv.Error:
+                # The sniffer failing does not mean the delimiter is the
+                # problem. Two very different files land here:
+                #
+                #   * a legitimate single-column upload, which has no delimiter
+                #     to find — not an error at all; and
+                #   * a file with ragged rows, which *does* have a delimiter the
+                #     sniffer cannot settle on because the field counts disagree.
+                #
+                # Reporting both as "Delimiter detection failure" pointed the
+                # reader at the wrong thing in both directions.
+                sep = self._delimiter_after_sniff_failure(sample_text)
 
         try:
             return pd.read_csv(io.StringIO(sample_text), sep=sep, **kwargs)
         except pd.errors.EmptyDataError as exc:
             raise IngestionError("Empty file.") from exc
+        except pd.errors.ParserError as exc:
+            raise IngestionError(_describe_parser_error(exc)) from exc
         except Exception as exc:
             raise IngestionError(f"Failed to parse delimited file: {exc}") from exc
+
+    @staticmethod
+    def _delimiter_after_sniff_failure(sample_text: str) -> str:
+        """Choose a delimiter when `csv.Sniffer` could not.
+
+        If **no** candidate delimiter occurs anywhere, the file genuinely has
+        one column: any separator parses it correctly, so the first candidate
+        is returned and pandas yields a single-column frame.
+
+        Otherwise a delimiter is present and the sniffer failed for some other
+        reason — ragged rows, overwhelmingly. The most frequent candidate is
+        returned so pandas can produce its real, specific complaint, which
+        `_describe_parser_error` then translates. Falling back to
+        single-column here instead would be worse than the original error: it
+        would turn a broken file into a silently wrong one.
+        """
+        counts = {d: sample_text.count(d) for d in _CANDIDATE_DELIMITERS}
+        if not any(counts.values()):
+            logger.info("No delimiter present; reading as a single-column file.")
+            return _CANDIDATE_DELIMITERS[0]
+        return max(counts, key=counts.get)
 
     def _load_json(self, content: bytes, **kwargs: Any) -> pd.DataFrame:
         """Parse JSON contents into a DataFrame."""
