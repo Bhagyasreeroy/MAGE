@@ -49,6 +49,7 @@ import re
 from typing import Any
 
 from agents.llm_client import GeminiClient, LLMError
+from agents.mining_agent import ATTRIBUTION_PATTERN_MARKER
 from agents.qa_agent import QAAgent
 from rag.knowledge_loader import KnowledgeBaseLoader
 from rag.vector_store import VectorStore
@@ -390,7 +391,7 @@ class RecommendationAgent:
         directives = context.get("directives", {}) or {}
         patterns = list(mining_dict.get("patterns") or [])
         if directives.get("attribution_trusted") is False:
-            patterns = [p for p in patterns if "' contributes most to predicting" not in p]
+            patterns = [p for p in patterns if ATTRIBUTION_PATTERN_MARKER not in p]
         target_quality_warning = directives.get("target_quality_warning")
         if target_quality_warning:
             patterns.insert(0, target_quality_warning)

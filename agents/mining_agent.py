@@ -40,6 +40,21 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# The phrase that identifies an attribution-derived pattern, defined here
+# because this module is the only place one is produced. RecommendationAgent
+# has to recognise these patterns again to drop them when the orchestrator
+# judged the fitted model too weak to trust (see its _build_recommendations),
+# and matching on a literal copied into that file would let a wording change
+# here silently stop that filter working — nothing would go red, and an
+# untrusted attribution would quietly reach the reader as a top finding.
+# Importing one constant makes the coupling structural instead.
+#
+# Note that tests/agents/test_feature_attribution.py still asserts the literal
+# wording. That is deliberate and not a duplicate of this constant: it pins the
+# user-visible sentence, so changing this value fails one clearly-named test
+# about phrasing rather than silently altering what readers see.
+ATTRIBUTION_PATTERN_MARKER = "' contributes most to predicting "
+
 # Below this many numeric columns or rows, clustering/PCA are too
 # under-determined to produce a meaningful result — skip rather than
 # report a number that doesn't mean anything.
@@ -739,7 +754,7 @@ class MiningAgent:
             # weigh it — an attribution from a model that fits poorly is weak
             # evidence, and hiding that would overstate the finding.
             patterns.append(
-                f"'{top['feature']}' contributes most to predicting "
+                f"'{top['feature']}{ATTRIBUTION_PATTERN_MARKER}"
                 f"'{feature_attribution['target']}' ({top['score']:.0%} of total attribution, "
                 f"via {feature_attribution['method']}, model score "
                 f"{feature_attribution['model_score']})."

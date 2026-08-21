@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from agents.llm_client import LLMError
+from agents.mining_agent import MiningAgent
 from agents.recommendation_agent import RecommendationAgent
 from rag.vector_store import VectorStore
 
@@ -226,6 +227,51 @@ class TestReflectionAwareRecommendations:
         }
         result = agent.run(context=context)
         assert len(result["recommendations"]) > 0
+
+    def test_the_filter_matches_a_pattern_mining_actually_produced(
+        self, agent: RecommendationAgent,
+    ) -> None:
+        """
+        The other tests in this class hand-write the attribution pattern as a
+        literal, so they would all keep passing if MiningAgent's wording drifted
+        while RecommendationAgent's filter kept looking for the old phrase — the
+        filter would silently stop filtering in production with nothing red.
+
+        This one asks MiningAgent to build the pattern, so producer and consumer
+        are bound by the same string rather than by two copies of it. It asserts
+        on the *feature name* carried by the pattern rather than on the phrasing
+        that surrounds it: an assertion that the old wording is absent would
+        pass trivially once the wording changed, which is the same vacuum this
+        test exists to close.
+        """
+        attribution = {
+            "target": "churned",
+            "method": "shap.TreeExplainer",
+            "model_score": 0.12,
+            "attributions": [{"feature": "tenure", "score": 0.8}],
+        }
+        patterns = MiningAgent()._build_patterns(
+            correlations={},
+            outliers={},
+            statistics={},
+            clustering=None,
+            row_count=100,
+            feature_attribution=attribution,
+        )
+        assert patterns, "MiningAgent must actually produce an attribution pattern here"
+
+        def texts_for(trusted: bool) -> list[str]:
+            result = agent.run(context={
+                "goal": "Predict churn",
+                "MiningAgent_output": {"patterns": patterns},
+                "directives": {"attribution_trusted": trusted},
+            })
+            return [rec["text_technical"] for rec in result["recommendations"]]
+
+        # Control: trusted, the attributed feature reaches the reader.
+        assert any("tenure" in t for t in texts_for(trusted=True))
+        # Untrusted, the filter must actually find and drop that same pattern.
+        assert not any("tenure" in t for t in texts_for(trusted=False))
 
 
 class TestLLMMode:
