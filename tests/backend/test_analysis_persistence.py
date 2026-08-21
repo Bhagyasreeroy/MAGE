@@ -197,6 +197,62 @@ class TestRunPersistence:
         client.delete("/auth/me", headers=headers_b)
 
 
+class TestRecommendationCards:
+    def test_the_response_carries_structured_cards(self) -> None:
+        """
+        The flattened `recommendations` list is what exports and history read,
+        so it stays. `recommendation_cards` is what the UI lays out — without
+        it the frontend has one string per recommendation and no way to
+        distinguish the finding from the methodology.
+        """
+        headers, _ = _auth_headers()
+        body = client.post(
+            "/analysis/run",
+            headers=headers,
+            data={"goal": "Identify correlations in this dataset", "expertise_level": "expert"},
+            files={"file": ("sales.csv", SAMPLE_CSV, "text/csv")},
+        ).json()
+
+        cards = body["recommendation_cards"]
+        assert len(cards) == len(body["recommendations"]), (
+            "one card per recommendation — the two forms describe the same items"
+        )
+        assert any(c["insight"] for c in cards), "a card must name its source document"
+        assert all(c["guidance"] for c in cards), "a card without guidance renders empty"
+        assert all(0.0 <= c["confidence"] <= 1.0 for c in cards)
+
+
+class TestCardsSurviveHistory:
+    def test_a_replayed_run_still_renders_as_cards(self) -> None:
+        """
+        The report page loads a *persisted* run, so cards that exist only on
+        the immediate POST response never reach the surface they were built
+        for — which is exactly what happened the first time this shipped.
+
+        Cards are not stored as their own column: the structured
+        recommendations already live inside the persisted RecommendationAgent
+        step output, so history rebuilds the cards from those with the same
+        code the live path uses. One source of truth, no migration.
+        """
+        headers, _ = _auth_headers()
+        run = client.post(
+            "/analysis/run",
+            headers=headers,
+            data={"goal": "Identify correlations in this dataset", "expertise_level": "expert"},
+            files={"file": ("sales.csv", SAMPLE_CSV, "text/csv")},
+        ).json()
+
+        replayed = client.get(f"/analysis/history/{run['run_id']}", headers=headers).json()
+
+        assert replayed["recommendation_cards"], "a replayed run must still carry cards"
+        assert len(replayed["recommendation_cards"]) == len(run["recommendation_cards"])
+        assert (
+            replayed["recommendation_cards"][0]["insight"]
+            == run["recommendation_cards"][0]["insight"]
+        )
+        assert replayed["recommendation_cards"][0]["guidance"]
+
+
 class TestHistory:
     def test_history_lists_own_runs_only(self) -> None:
         headers_a, _ = _auth_headers()

@@ -85,6 +85,72 @@ _REGISTER_BY_EXPERTISE: dict[str, str] = {
 }
 
 
+def build_recommendation_cards(
+    structured_recs: list[dict[str, Any]], expertise_level: str,
+) -> list[dict[str, Any]]:
+    """
+    The structured form of the recommendations, alongside the flattened one.
+
+    ``AnalysisResponse.recommendations`` is one string per item: the finding,
+    the methodology prose, the source title and the retrieval confidence all
+    concatenated. That is what exports, history persistence and every existing
+    reader consume, so it stays exactly as it was — but it leaves the frontend
+    nothing to lay out, which is why a grounded answer rendered as a wall of
+    text beside the LLM's structured one.
+
+    Module-level rather than a method because the history endpoint rebuilds
+    cards for a replayed run from its persisted RecommendationAgent step
+    output, and must do it with the same code as the live path. Cards are
+    deliberately not a stored column: the structured recommendations are
+    already inside that step output, so storing them again would mean two
+    sources of truth and a migration for old rows.
+
+    ``guidance`` follows the same FR-04 register as the flat text — a
+    beginner's card and an expert's card differ in register, not just styling.
+    Runs persisted before this existed have no ``guidance_*`` keys and fall
+    back to the flattened text: a card with the finding repeated inside its
+    guidance looks worse than a fresh one, and is far better than raising on
+    history replay.
+    """
+    text_field = _REGISTER_BY_EXPERTISE.get(expertise_level, "text_technical")
+    guidance_field = text_field.replace("text_", "guidance_", 1)
+
+    def _guidance(rec: dict[str, Any]) -> str:
+        """The register's guidance, without the title the card already shows.
+
+        The analyst register names its methodology inline ("Per Clustering
+        Method Selection: …"), which FR-04 relies on to separate it from the
+        plain register structurally rather than by length. On a card that
+        attribution *is* the heading, so the inline copy reads as a stutter.
+        Only an attribution to this card's own document is removed — a
+        reference to a different one is information, not repetition — and
+        ``text_analyst`` keeps its prefix either way, because the flat list has
+        no heading to carry it.
+        """
+        text = (
+            rec.get(guidance_field)
+            or rec.get("guidance_technical")
+            or rec.get(text_field)
+            or rec.get("text_technical", "")
+        )
+        title = rec.get("insight", "")
+        prefix = f"Per {title}: "
+        if title and text.startswith(prefix):
+            return text[len(prefix):]
+        return text
+
+    return [
+        {
+            "insight": rec.get("insight", ""),
+            "finding": rec.get("finding"),
+            "guidance": _guidance(rec),
+            "confidence": rec.get("confidence", 0.0),
+            "sources": rec.get("sources", []) or [],
+        }
+        for rec in structured_recs
+    ]
+
+
 class OrchestratorAgent:
     """Goal-conditioned orchestrator that drives the full MAGE EDA pipeline."""
 
@@ -408,6 +474,9 @@ class OrchestratorAgent:
             rec.get(text_field) or rec.get("text_technical") or rec.get("insight", "")
             for rec in structured_recs
         ]
+        # The structured form, alongside the flattened one. See
+        # build_recommendation_cards for why both exist.
+        recommendation_cards = build_recommendation_cards(structured_recs, expertise_level)
         rag_sources = recommendation_output.get("rag_sources", [])
 
         return {
@@ -418,6 +487,7 @@ class OrchestratorAgent:
             "classification": classification.model_dump(),
             "steps": steps,
             "recommendations": recommendations,
+            "recommendation_cards": recommendation_cards,
             "rag_sources": rag_sources,
             "summary": (
                 f"Goal classified as '{classification.task_type.value}'. "
