@@ -30,6 +30,16 @@ from agents.planner import INGESTION, MINING
 logger = logging.getLogger(__name__)
 
 
+class MissingDataSourceError(ValueError):
+    """
+    Raised when a run has no dataset to analyse.
+
+    Its own type, not a bare ValueError, because the routers have to tell it
+    apart from a genuine pipeline failure: this one is the caller's mistake
+    (422 / a WebSocket bad-request close), everything else is ours (500).
+    """
+
+
 class OrchestratorService:
     """
     Bridges the HTTP layer with the OrchestratorAgent.
@@ -120,6 +130,33 @@ class OrchestratorService:
             dataset = await dataset_service.get_dataset(db, user_id, dataset_id)
             if dataset is not None:
                 data["source"] = dataset_service.as_stored_file(dataset)
+
+        # No resolvable dataset → refuse, rather than run the pipeline anyway.
+        #
+        # Without this the run completes and returns a full report. Ingestion
+        # fails, Mining and Visualization report *success* at having skipped
+        # (they return empty results rather than raising), and
+        # RecommendationAgent grounds against the knowledge base using the goal
+        # text alone — a path it needs, since the follow-up chat asks
+        # dataset-free methodology questions. The output is five real, cited
+        # recommendations about the goal's topic, presented as though they were
+        # analysis of the user's data. Compare `goal`, whose absence FastAPI
+        # already rejects with a 422; this is the same class of missing input.
+        #
+        # One check covers both ways of arriving here: no file and no
+        # dataset_id, and a dataset_id that resolved to nothing (a wrong id, or
+        # another user's). The second case was worse than a misleading report —
+        # `resolved_dataset_id` kept the unresolvable id and persisting the run
+        # hit a foreign-key violation, a 500 from a request that should have
+        # been a 422.
+        if "source" not in data:
+            raise MissingDataSourceError(
+                "This run has no dataset to analyse. Upload a file or pass the "
+                "dataset_id of one you already uploaded."
+                if dataset_id is None
+                else f"No dataset found for dataset_id {dataset_id!r}. "
+                "Upload a file, or pass the id of a dataset you own."
+            )
 
         logger.info(
             "Starting analysis | goal=%r expertise=%s dataset_id=%s has_source=%s",

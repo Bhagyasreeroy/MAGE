@@ -88,7 +88,7 @@ from backend.schemas.analysis import (
 )
 from backend.schemas.auth import MessageResponse
 from backend.services import analysis_run_service, dataset_service, export_service, transform_service
-from backend.services.orchestrator_service import OrchestratorService
+from backend.services.orchestrator_service import MissingDataSourceError, OrchestratorService
 from data_pipeline.ingestion import IngestionError
 from data_pipeline.processing import ProcessingError
 from rag.knowledge_loader import KnowledgeBaseLoader
@@ -156,6 +156,13 @@ async def run_analysis(
             request, db=db, user_id=current_user.id, file=file, dataset_id=dataset_id
         )
         return result
+    except MissingDataSourceError as exc:
+        # The caller's mistake, not a pipeline failure — and it must be caught
+        # ahead of the generic handler below, which would report it as a 500.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
     except Exception as exc:
         logger.exception("Analysis pipeline failed: %s", exc)
         raise HTTPException(
@@ -336,6 +343,15 @@ async def _stream_analysis(websocket: WebSocket, token: str | None, db: AsyncSes
         # The client hung up. The run is left to finish so work already done
         # still gets persisted — the `finally` below is what waits for it.
         logger.info("Stream client disconnected; letting the run finish.")
+    except MissingDataSourceError as exc:
+        # Same distinction as the REST path: a bad request, not our failure.
+        # The stream endpoint only ever receives a dataset_id, so this is the
+        # id-resolves-to-nothing case.
+        try:
+            await websocket.send_json({"type": "error", "detail": str(exc)})
+            await websocket.close(code=WS_BAD_REQUEST)
+        except Exception:  # noqa: BLE001 - socket may already be gone
+            pass
     except Exception as exc:  # noqa: BLE001 - report, then close cleanly
         logger.exception("Streaming analysis failed: %s", exc)
         try:

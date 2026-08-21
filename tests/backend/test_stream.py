@@ -20,6 +20,7 @@ user so runs stay isolated.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import uuid
@@ -286,17 +287,26 @@ class TestStreamOwnership:
     def test_another_users_dataset_is_not_streamed(self, dataset_id: str) -> None:
         """
         A second user naming the first user's dataset_id must not receive its
-        data. `get_dataset` is user-scoped, so the id resolves to nothing and
-        the pipeline runs without a source rather than leaking the file.
+        data. `get_dataset` is user-scoped, so the id resolves to nothing.
+
+        That used to mean the pipeline ran anyway with no source and returned a
+        completed report built from goal-only retrieval. It is now refused
+        outright (MissingDataSourceError → a bad-request close), which is the
+        same security property reached more honestly: the caller cannot tell
+        "this dataset is not yours" from "no such dataset", and gets no report
+        either way.
         """
         other_token, _ = _register()
         with client.websocket_connect(f"/analysis/stream?token={other_token}") as ws:
             ws.send_json({"goal": "Summarise this dataset", "dataset_id": dataset_id})
             ws.receive_json()
-            final = _drain(ws)[-1]
+            frames = _drain(ws)
 
-        assert final["type"] == "complete"
-        ingestion = next(
-            s for s in final["result"]["steps"] if s["agent_name"] == "IngestionAgent"
-        )
-        assert ingestion["status"] == "error"
+        assert frames[-1]["type"] == "error"
+        assert "dataset" in frames[-1]["detail"].lower()
+
+        # The point of the test: none of the owner's data came back, in any
+        # frame — not the column names, not the values.
+        blob = json.dumps(frames)
+        for leaked in ("order_id", "churned", "120.5", "South"):
+            assert leaked not in blob, f"{leaked!r} leaked to a non-owner"
