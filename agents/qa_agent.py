@@ -130,7 +130,15 @@ class QAAgent:
         return QAAnswer(f"'{top_col}' has the fewest missing values: {top_info.get('missing_count', 0)} missing.")
 
     def _imputation_advice(self, goal_lower, columns, data_quality, statistics, outliers, correlations, clustering, feature_importance, ingestion_output) -> QAAnswer | None:
-        if not re.search(r"imputat|how (should|do|can) i (handle|deal with|fix|treat).*missing", goal_lower):
+        # "imput" (not "imputat") so it also catches "impute"/"imputing", not
+        # just "imputation"/"imputate" — a real user wrote "best way to
+        # impute postal" and that fell through to the generic RAG path
+        # entirely, since "impute" doesn't contain "imputat" as a substring.
+        if not re.search(
+            r"imput|(how|what) (should|do|can|to) i? ?(handle|deal with|fix|treat|do (about|with)).*missing"
+            r"|(best|good|right) way to (handle|deal with|fix|treat|impute).*missing",
+            goal_lower,
+        ):
             return None
 
         mentioned = _columns_mentioned(goal_lower, columns)

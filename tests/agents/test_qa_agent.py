@@ -79,6 +79,22 @@ class TestImputationAdvice:
         assert answer is not None
         assert "median" in answer.text.lower()
 
+    def test_impute_is_recognized_not_just_imputation(self, qa: QAAgent, mining_and_ingestion) -> None:
+        """A real user wrote 'best way to impute units' — 'impute' doesn't
+        contain 'imputat' as a substring, so this fell through the QA
+        short-circuit entirely and landed in the generic RAG path, which had
+        nothing goal-specific to say about it."""
+        mining, ingestion = mining_and_ingestion
+        answer = qa.try_answer("best way to impute units", mining, ingestion)
+        assert answer is not None
+        assert "units" in answer.text
+
+    def test_do_about_missing_phrasing(self, qa: QAAgent, mining_and_ingestion) -> None:
+        mining, ingestion = mining_and_ingestion
+        answer = qa.try_answer("what should I do about missing units values", mining, ingestion)
+        assert answer is not None
+        assert "units" in answer.text
+
 
 class TestRowColumnCounts:
     def test_row_count(self, qa: QAAgent, mining_and_ingestion) -> None:
