@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -28,10 +29,106 @@ _FILTER_OPS = {"eq", "neq", "gt", "gte", "lt", "lte", "contains", "is_null", "no
 _FILL_STRATEGIES = {"mean", "median", "mode", "constant", "ffill", "bfill"}
 _CAST_DTYPES = {"int64", "float64", "string", "bool", "datetime64[ns]", "category"}
 
+# What the spreadsheet grid may send for a boolean cell. Every cell arrives as
+# a string — the grid is made of text inputs — so "False" has to be recognised
+# as false rather than as the non-empty (and therefore truthy) string it is.
+_TRUE_STRINGS = {"true", "t", "yes", "y", "1"}
+_FALSE_STRINGS = {"false", "f", "no", "n", "0"}
+
 
 class ProcessingError(Exception):
     """Raised for invalid transform ops — unknown op type, missing column,
     bad params. Mirrors IngestionError; the router turns this into a 400."""
+
+
+def _is_blank(value: Any) -> bool:
+    """
+    True for a cleared cell.
+
+    The grid renders a null as an empty text input, so an empty string is how
+    "no value" comes back — whether the user emptied the cell or never touched
+    a cell that was already null. Both mean the same thing here.
+    """
+    if value is None or value is pd.NaT:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    return isinstance(value, float) and pd.isna(value)
+
+
+def _coerce_cell_value(series: pd.Series, value: Any, column: str) -> tuple[Any, str | None]:
+    """
+    Convert one incoming cell value into something ``series``'s dtype can hold.
+
+    Returns ``(value, widen_to)``, where ``widen_to`` is a dtype the column has
+    to be converted to before the assignment will work, or None when it fits as
+    it is. Widening is a last resort — it is only returned where the column
+    genuinely cannot represent the value, never merely to make the assignment
+    easier.
+
+    Raises ProcessingError (→ 400) when the value is not something the column
+    could hold under any reasonable reading. "abc" in a numeric column is a
+    typo, and saying so beats storing it as text and quietly turning a numeric
+    column into an object one.
+    """
+    dtype = series.dtype
+    blank = _is_blank(value)
+
+    # Before the numeric branch: pandas counts bool as numeric, and a bool
+    # column reaching `pd.to_numeric` would accept "1"/"0" while rejecting the
+    # "true"/"false" the grid actually sends.
+    if pd.api.types.is_bool_dtype(dtype):
+        if blank:
+            # A bool column has no null to hold; object is the narrowest dtype
+            # that can carry True, False and missing together.
+            return None, "object"
+        text = str(value).strip().lower()
+        if text in _TRUE_STRINGS:
+            return True, None
+        if text in _FALSE_STRINGS:
+            return False, None
+        raise ProcessingError(
+            f"'{value}' is not a true/false value, and '{column}' is a boolean column."
+        )
+
+    if pd.api.types.is_numeric_dtype(dtype):
+        # int64 cannot hold a missing value either, but unlike bool, pandas
+        # promotes it to float64 on assignment by itself — so no widening.
+        if blank:
+            return np.nan, None
+        try:
+            number = pd.to_numeric(str(value).strip())
+        except (ValueError, TypeError) as exc:
+            raise ProcessingError(
+                f"'{value}' is not a number, and '{column}' is a numeric column."
+            ) from exc
+        # 9.5 into an integer column: keeping the value and widening the column
+        # is right, because the alternative is silently storing 9.
+        if pd.api.types.is_integer_dtype(dtype) and not float(number).is_integer():
+            return number, "float64"
+        return number, None
+
+    if pd.api.types.is_datetime64_any_dtype(dtype):
+        if blank:
+            return pd.NaT, None
+        try:
+            return pd.Timestamp(value), None
+        except (ValueError, TypeError) as exc:
+            raise ProcessingError(
+                f"'{value}' is not a date, and '{column}' is a datetime column."
+            ) from exc
+
+    # A category rejects any value outside its existing categories. Editing a
+    # cell to something new is a legitimate thing to want, so the column stops
+    # being categorical rather than the edit being refused.
+    if isinstance(dtype, pd.CategoricalDtype):
+        if blank:
+            return None, None
+        if value in dtype.categories:
+            return value, None
+        return str(value), "object"
+
+    return (None if blank else str(value)), None
 
 
 class DataProcessingEngine:
@@ -216,10 +313,25 @@ class DataProcessingEngine:
         return result, f"Cast '{column}' to {dtype}.{note}"
 
     def _edit_cells(self, df: pd.DataFrame, op: dict[str, Any]) -> tuple[pd.DataFrame, str]:
+        """
+        Apply individual cell edits from the spreadsheet grid.
+
+        Every value arrives as a **string**, because the grid is made of text
+        inputs. Writing one straight into a typed column is what this used to
+        do, and pandas refuses it — ``TypeError: Invalid value '42' for dtype
+        'int64'`` — which is not a ProcessingError, so it escaped the router's
+        400 handler and surfaced as a 500. Editing any numeric cell failed;
+        only text columns worked, which is exactly what the tests covered.
+
+        So each value is converted to the column's own type first, and a value
+        the column genuinely cannot represent is the user's mistake (a 400 with
+        a message naming the column), not a server fault.
+        """
         edits = op.get("edits") or []
         if not edits:
             raise ProcessingError("edit_cells requires a non-empty 'edits' list.")
         result = df.copy()
+        widened: list[str] = []
         for edit in edits:
             row_index = edit.get("row_index")
             column = edit.get("column")
@@ -229,8 +341,20 @@ class DataProcessingEngine:
                 raise ProcessingError(f"Column not found: {column}")
             if not (0 <= row_index < len(result)):
                 raise ProcessingError(f"Row index out of range: {row_index}")
-            result.iat[row_index, result.columns.get_loc(column)] = edit.get("value")
-        return result, f"Edited {len(edits)} cell(s)."
+
+            value, widen_to = _coerce_cell_value(result[column], edit.get("value"), column)
+            if widen_to is not None:
+                # The column cannot hold the new value as it stands. Widening
+                # it is the same accommodation `_cast_dtype` already makes when
+                # int64 meets a missing value, and it is reported the same way
+                # — silently changing a column's type is not something a user
+                # should have to discover for themselves.
+                result[column] = result[column].astype(widen_to)
+                widened.append(f"'{column}' widened to {widen_to}")
+            result.iat[row_index, result.columns.get_loc(column)] = value
+
+        note = f" ({'; '.join(dict.fromkeys(widened))})" if widened else ""
+        return result, f"Edited {len(edits)} cell(s).{note}"
 
     _HANDLERS = {
         "drop_columns": _drop_columns,

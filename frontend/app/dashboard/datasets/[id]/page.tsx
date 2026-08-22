@@ -266,6 +266,11 @@ export default function DatasetWorkbenchPage() {
       {tab === 'overview' && <OverviewTab detail={detail} />}
       {tab === 'spreadsheet' && (
         <SpreadsheetTab
+          // Keyed on the version, so pending edits and the current page reset
+          // with it. Edits are only meaningful against the rows they were made
+          // against, and saving produces a *new* version — carrying them over
+          // would re-apply them to different data.
+          key={detail.id}
           datasetId={detail.id}
           onSaved={(newId) => router.push(`/dashboard/datasets/${newId}`)}
           setError={setError}
@@ -330,6 +335,11 @@ function SpreadsheetTab({
   const [preview, setPreview] = useState<DatasetPreview | null>(null);
   const [offset, setOffset] = useState(0);
   const limit = 25;
+  // Keyed by **absolute** row index, not by position on the current page.
+  // Page-relative keys meant an edit belonged to a screen position rather than
+  // to a row: edit row 3 of page 1, page forward, and the edit both appeared
+  // on page 2's row 3 and — because the save added the *current* offset —
+  // saved itself onto row 28.
   const [edits, setEdits] = useState<Record<number, Record<string, string>>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingPage, setIsLoadingPage] = useState(true);
@@ -357,9 +367,11 @@ function SpreadsheetTab({
     setIsSaving(true);
     setError(null);
     try {
+      // Already absolute — every page's edits travel together, each against
+      // the row it was actually made on.
       const editList = Object.entries(edits).flatMap(([rowIndex, cols]) =>
         Object.entries(cols).map(([column, value]) => ({
-          row_index: offset + Number(rowIndex),
+          row_index: Number(rowIndex),
           column,
           value,
         })),
@@ -394,16 +406,23 @@ function SpreadsheetTab({
           </thead>
           <tbody>
             {preview.rows.map((row, r) => (
-              <tr key={r} className="border-t border-dusty-rose/10">
+              <tr key={offset + r} className="border-t border-dusty-rose/10">
                 {row.map((cell, c) => {
                   const column = preview.columns[c];
-                  const edited = edits[r]?.[column];
+                  const rowIndex = offset + r;
+                  const edited = edits[rowIndex]?.[column];
                   return (
                     <td key={c} className="p-0">
+                      {/* Controlled, not `defaultValue`. React assigns
+                          `element.value` when it mounts an input, which sets
+                          the DOM's dirty-value flag; from then on the value
+                          attribute that `defaultValue` writes is ignored, so
+                          paging re-rendered the row and left the previous
+                          page's numbers on screen. */}
                       <input
-                        defaultValue={edited ?? (cell === null ? '' : String(cell))}
+                        value={edited ?? (cell === null ? '' : String(cell))}
                         placeholder={cell === null ? 'null' : ''}
-                        onChange={(e) => handleCellChange(r, column, e.target.value)}
+                        onChange={(e) => handleCellChange(rowIndex, column, e.target.value)}
                         className={`w-full px-3 py-2 text-navy/80 bg-transparent focus:outline-none focus:bg-lavender-light/20 ${
                           edited !== undefined ? 'bg-peach-light/20' : ''
                         }`}
