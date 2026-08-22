@@ -27,6 +27,7 @@ from collections.abc import Callable
 from time import perf_counter
 from typing import Any
 
+from agents import conversation as conversation_state
 from agents.goal_classifier import GoalClassifier, _extract_columns, _find_target_column
 from agents.ingestion_agent import IngestionAgent
 from agents.mining_agent import MiningAgent
@@ -228,9 +229,27 @@ class OrchestratorAgent:
         if prior_runs:
             context["prior_runs"] = prior_runs
 
+        # Chat history for this dataset, arriving the same way and for the same
+        # reason: the service layer owns the request payload, the
+        # RecommendationAgent consumes it as ordinary context. Normalised once,
+        # here, so no downstream agent has to re-validate client-supplied data.
+        turns = conversation_state.normalize((data or {}).get("conversation"))
+        if turns:
+            context["conversation"] = turns
+
+        # An elliptical follow-up ("why?", "what about revenue?") carries its
+        # subject in the previous turn. Resolve it before anything reads the
+        # goal, so the classifier and the retriever see the same, complete
+        # question. The user's own wording is what gets stored and displayed —
+        # `resolved.text` exists to be *read by machines*, not shown back.
+        resolved = conversation_state.resolve(goal, turns)
+        if resolved.is_followup:
+            context["resolved_goal"] = resolved.text
+            logger.info("Resolved follow-up %r against previous turn %r", goal, resolved.carried)
+
         # 1. Classify the goal → task type. (Rules work on the goal text alone;
         #    the target column is refined once ingestion reveals the schema.)
-        classification = self._classifier.classify(goal)
+        classification = self._classifier.classify(resolved.text)
         context["task_type"] = classification.task_type.value
 
         # 2. Build the conditional pipeline for this task type.
