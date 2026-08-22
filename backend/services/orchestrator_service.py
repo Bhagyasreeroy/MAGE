@@ -178,6 +178,16 @@ class OrchestratorService:
             db, user_id=user_id, goal=request.goal
         )
 
+        # This chat's own history, travelling the same way as prior runs: on
+        # the data payload, because the service layer owns the request, and
+        # lifted into agent context by the orchestrator. Distinct from
+        # `prior_runs` in both scope and purpose — that is cross-run memory
+        # retrieved by similarity, this is the literal turns of the
+        # conversation in front of the user, and it is what lets an elliptical
+        # follow-up be resolved and a repeated answer be avoided.
+        if request.conversation:
+            data["conversation"] = [turn.model_dump() for turn in request.conversation]
+
         # The agent is synchronous and CPU-bound (pandas / sklearn). Run it on a
         # worker thread rather than inline: on the event loop it would block
         # every other request for the duration of the analysis, and streaming

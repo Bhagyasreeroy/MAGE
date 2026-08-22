@@ -14,9 +14,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ExpertiseLevel(str, Enum):
@@ -99,12 +99,47 @@ class ReActStep(BaseModel):
     )
 
 
+# Floor on how much of a question a goal has to be. A first request is
+# starting from nothing, so it has to say what it wants. A follow-up is not:
+# "why?" is a complete question when there is a previous turn to attach it to,
+# and rejecting it would refuse the very shape of question that conversational
+# follow-up exists to support.
+MIN_GOAL_CHARS = 5
+MIN_FOLLOWUP_GOAL_CHARS = 2
+
+
+class ConversationTurn(BaseModel):
+    """
+    One prior turn of the follow-up chat, replayed by the client.
+
+    The pipeline is stateless — every chat message is a fresh run — so the
+    client sends back what has been said so far. Without it a follow-up like
+    "why?" has no subject, and nothing can tell that the answer about to be
+    built is the one the user already read.
+
+    `sources` is what makes the second of those possible: an assistant turn
+    records which knowledge-base documents it cited, so the next turn can
+    prefer material the user has not seen. Empty for user turns.
+    """
+
+    role: Literal["user", "assistant"] = Field(..., description="Who produced this turn.")
+    content: str = Field(
+        ...,
+        max_length=4000,
+        description="What was said. Assistant turns may be truncated by the client.",
+    )
+    sources: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="Knowledge-base documents this turn cited (assistant turns only).",
+    )
+
+
 class AnalysisRequest(BaseModel):
     """Payload sent by the frontend to trigger an EDA pipeline run."""
 
     goal: str = Field(
         ...,
-        min_length=5,
         max_length=2000,
         description="Natural-language analytical goal (e.g. 'Find anomalies in sales data').",
         examples=["Identify the top factors driving customer churn."],
@@ -125,6 +160,33 @@ class AnalysisRequest(BaseModel):
         default=RecommendationMode.rag,
         description="'rag' (grounded/cited, default) or 'llm' (freeform Gemini response).",
     )
+    conversation: list[ConversationTurn] = Field(
+        default_factory=list,
+        max_length=32,
+        description=(
+            "Prior turns of this chat, oldest first. Supplied on follow-up "
+            "requests so an elliptical question can be resolved against what "
+            "came before, and so the answer avoids repeating what was already "
+            "shown. Absent on the first request of a conversation."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _goal_is_long_enough(self) -> "AnalysisRequest":
+        """
+        Enforce the goal floor, which depends on whether this is a follow-up.
+
+        A validator rather than `min_length` on the field, because the limit is
+        not a property of the field alone — it is a property of the request.
+        See `MIN_GOAL_CHARS`.
+        """
+        minimum = MIN_FOLLOWUP_GOAL_CHARS if self.conversation else MIN_GOAL_CHARS
+        if len(self.goal.strip()) < minimum:
+            raise ValueError(
+                f"`goal` must be at least {minimum} characters"
+                + ("." if self.conversation else " on the first request of a conversation.")
+            )
+        return self
 
 
 class StepResult(BaseModel):

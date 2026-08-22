@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,7 @@ from fastapi import (
 )
 from fastapi.responses import Response
 from jose import JWTError
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,6 +79,7 @@ from backend.schemas.analysis import (
     AnalysisRunSummary,
     ColumnStats,
     ColumnSummary,
+    ConversationTurn,
     DatasetDetail,
     DatasetPreview,
     DatasetSummary,
@@ -132,6 +135,46 @@ _SAMPLE_DATASET_REGISTRY: dict[str, tuple[str, str]] = {
 }
 
 
+def _parse_conversation(raw: str | None) -> list[ConversationTurn]:
+    """
+    Decode the `conversation` form field into typed turns.
+
+    Multipart has no nested types, so the chat history travels as a JSON
+    string in one field. Nothing is sent on the first request of a
+    conversation, which is why absent and empty both mean "no history".
+
+    Malformed input is rejected rather than quietly dropped. This field is
+    built by our own client from state it already holds, so a bad payload is a
+    bug on the way in — and swallowing it would restore exactly the failure
+    this field exists to fix: a follow-up answered as though nothing had been
+    asked before, with nothing anywhere to say why.
+    """
+    if not raw or not raw.strip():
+        return []
+
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"`conversation` must be valid JSON: {exc.msg}.",
+        ) from exc
+
+    if not isinstance(decoded, list):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="`conversation` must be a JSON array of chat turns.",
+        )
+
+    try:
+        return [ConversationTurn.model_validate(turn) for turn in decoded]
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"`conversation` has a malformed turn: {exc.errors()[0].get('msg', 'invalid')}.",
+        ) from exc
+
+
 @router.post(
     "/run",
     response_model=AnalysisResponse,
@@ -147,6 +190,7 @@ async def run_analysis(
     file: UploadFile | None = File(None),
     dataset_id: str | None = Form(None),
     root_run_id: str | None = Form(None),
+    conversation: str | None = Form(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> AnalysisResponse:
@@ -157,6 +201,13 @@ async def run_analysis(
       a dataset file (first request) or a dataset_id from a previous
       response (follow-up requests, to keep querying the same dataset)
       in a single multipart/form-data request.
+    - `conversation` is an optional JSON array of prior chat turns
+      (`[{"role": "user"|"assistant", "content": str, "sources": [str]}]`,
+      oldest first). It arrives JSON-encoded because the rest of this
+      endpoint is multipart, which has no nested types. Supplied on
+      follow-ups so an elliptical question ("why?") can be resolved against
+      the previous one and the answer can avoid repeating what was already
+      shown.
     - `mode` selects how RecommendationAgent responds: "rag" (default,
       grounded/cited) or "llm" (freeform Gemini response, no citations).
     - `root_run_id`, when given, marks this as a follow-up in an existing
@@ -168,12 +219,30 @@ async def run_analysis(
     - Returns structured EDA recommendations grounded in the RAG layer,
       plus dataset_id/run_id to reuse for follow-up calls / history lookups.
     """
-    request = AnalysisRequest(goal=goal, expertise_level=expertise_level, mode=mode)
+    # Built here rather than taken as a body model, because the endpoint is
+    # multipart (it carries a file). That puts validation inside the handler,
+    # where an uncaught ValidationError would be reported as a 500 — so it is
+    # translated to the 422 the same failure would have produced had FastAPI
+    # validated a JSON body.
+    try:
+        request = AnalysisRequest(
+            goal=goal,
+            expertise_level=expertise_level,
+            mode=mode,
+            conversation=_parse_conversation(conversation),
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=exc.errors()[0].get("msg", "Invalid analysis request."),
+        ) from exc
+
     resolved_root_run_id: str | None = None
     if root_run_id:
         owned = await analysis_run_service.get_run(db, current_user.id, root_run_id)
         if owned is not None:
             resolved_root_run_id = owned.root_run_id
+
     try:
         result = await _orchestrator_service.run(
             request, db=db, user_id=current_user.id, file=file, dataset_id=dataset_id,

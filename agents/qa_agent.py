@@ -15,6 +15,18 @@ directly from computed data — no retrieval, no re-analysis.
 Not a general NLU system — a bounded set of question shapes recognized via
 regex. Returns None (falls through to RecommendationAgent's RAG path) for
 anything broader, like "what should I investigate about this dataset."
+
+**Row lookup** is the one handler that reads the data itself rather than
+MiningAgent's summary of it. "Tell me about Drake" is a question about the
+*contents* of the table, and every statistic upstream describes its *shape*, so
+nothing computed could answer it — and the knowledge base, which holds EDA
+methodology, has nothing to say about an artist either. Asked that against a
+Spotify dataset, the chat previously answered with a card about SHAP and LIME.
+
+It is matched by looking for a cell value in the question rather than by
+recognising a phrasing, which is what keeps it from being another list of
+regexes to extend forever: any of "tell me about Drake", "who is Drake",
+"Drake?" finds the same row.
 """
 
 from __future__ import annotations
@@ -22,6 +34,28 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Any
+
+import numpy as np
+import pandas as pd
+
+# How distinct a column's values must be before one of them can be said to name
+# a single row. Below this the value identifies a *group* — "Colombia", "Pop" —
+# and a group is a filter or an aggregate, which is a different question and
+# one the dataset's Query tab already answers in SQL.
+IDENTIFIER_UNIQUENESS = 0.9
+
+# Shortest cell value worth matching against a question. Two characters occur
+# in ordinary prose far too often to be evidence of anything.
+MIN_ENTITY_CHARS = 3
+
+# Longest phrase, in words, considered as a candidate name. Past this the
+# scan costs more than the names it would find are worth.
+MAX_ENTITY_WORDS = 6
+
+# Fields listed for one row before the answer stops being readable.
+MAX_ROW_FIELDS = 20
+
+_NON_ALPHANUMERIC_RE = re.compile(r"[^a-z0-9]+")
 
 
 @dataclass
@@ -32,21 +66,89 @@ class QAAnswer:
     source: str | None = None
 
 
-def _format_stat_value(value: float) -> str:
-    """Comma-grouped for values that would otherwise print in scientific
-    notation — %.3g only keeps 3 significant digits, which turns a $61,200
-    max into "6.12e+04". Small values stay on %.3g, where it reads fine."""
-    if abs(value) >= 1000:
-        text = f"{value:,.2f}"
-        return text[:-3] if text.endswith(".00") else text
-    return f"{value:.3g}"
-
-
 def _columns_mentioned(goal_lower: str, columns: list[str]) -> list[str]:
     """Column names that appear as whole words in the goal text, longest first
     (so 'monthly_revenue' matches before a coincidental 'revenue' substring)."""
     found = [c for c in columns if c and re.search(rf"(?<!\w){re.escape(c.lower())}(?!\w)", goal_lower)]
     return sorted(found, key=len, reverse=True)
+
+
+def _normalize(text: str) -> str:
+    """Lowercase, punctuation flattened to single spaces.
+
+    Applied to both the question and the cell values so they meet on the same
+    terms — "Ty Dolla $ign" in the data and "ty dolla $ign" as typed both
+    become "ty dolla ign" and match.
+    """
+    return _NON_ALPHANUMERIC_RE.sub(" ", str(text).lower()).strip()
+
+
+def _identifier_columns(df: pd.DataFrame) -> list[str]:
+    """Text columns distinct enough that one value names one row."""
+    row_count = len(df)
+    if row_count == 0:
+        return []
+
+    identifiers: list[str] = []
+    for column in df.columns:
+        series = df[column]
+        # Numbers and dates are excluded deliberately. A unique integer id is
+        # not what anyone types when they ask about a record, and a bare year
+        # in a question would match a date column constantly.
+        if pd.api.types.is_numeric_dtype(series) or pd.api.types.is_datetime64_any_dtype(series):
+            continue
+        distinct = int(series.nunique(dropna=True))
+        if distinct > 1 and distinct / row_count >= IDENTIFIER_UNIQUENESS:
+            identifiers.append(column)
+    return identifiers
+
+
+def _candidate_names(goal_normalized: str) -> list[str]:
+    """Every phrase in the question that could be a name, longest first.
+
+    Longest first because the longest match is the right one: in "tell me about
+    bad bunny", both "bad bunny" and "bunny" may be present in the data, and
+    only one of them is what was asked about.
+    """
+    words = goal_normalized.split()
+    grams: list[str] = []
+    for size in range(min(MAX_ENTITY_WORDS, len(words)), 0, -1):
+        for start in range(len(words) - size + 1):
+            grams.append(" ".join(words[start : start + size]))
+    return grams
+
+
+def _display(value: Any) -> str:
+    """One cell, as a reader wants to see it."""
+    try:
+        if value is None or pd.isna(value):
+            return "—"
+    except (TypeError, ValueError):
+        pass  # arrays and the like are never NA; fall through and format them
+
+    # Checked before the numeric branch, so "2006" stored as text is not
+    # reformatted into "2,006".
+    if isinstance(value, str):
+        return value
+    # np.bool_ is not a subclass of bool, and a row pulled out of a
+    # mixed-dtype frame keeps numpy's scalar types. Missing it here sent
+    # booleans down the numeric branch and rendered True as "1".
+    if isinstance(value, (bool, np.bool_)):
+        return "yes" if value else "no"
+
+    # float() rather than isinstance, so numpy's scalar types are covered
+    # without naming each of them.
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if number.is_integer():
+        # Four digits and under go ungrouped, so a year reads as 2006 rather
+        # than 2,006. Nothing here knows which column is a year, and the
+        # convention is right for small counts either way.
+        return f"{number:.0f}" if abs(number) < 10000 else f"{number:,.0f}"
+    # A fixed 2dp would round a small magnitude away to "0.00".
+    return f"{number:.3g}" if abs(number) < 0.01 else f"{number:,.2f}"
 
 
 class QAAgent:
@@ -55,7 +157,15 @@ class QAAgent:
         goal: str,
         mining_output: dict[str, Any] | None,
         ingestion_output: dict[str, Any] | None,
+        dataframe: pd.DataFrame | None = None,
     ) -> QAAnswer | None:
+        """Answer `goal` directly, or return None to fall through to RAG.
+
+        `dataframe` is the ingested table, which IngestionAgent already leaves
+        on the pipeline context. Only the row lookup uses it; every other
+        handler reads MiningAgent's computed summary, and omitting it simply
+        turns that one handler off.
+        """
         mining_output = mining_output or {}
         ingestion_output = ingestion_output or {}
         goal_lower = goal.lower().strip()
@@ -67,9 +177,6 @@ class QAAgent:
         clustering = mining_output.get("clustering")
         feature_importance = mining_output.get("feature_importance") or []
         columns = list(statistics.keys()) or list(data_quality.keys())
-
-        if not columns and "row_count" not in ingestion_output:
-            return None  # nothing computed yet to answer from
 
         handlers = [
             self._row_column_count,
@@ -84,14 +191,82 @@ class QAAgent:
             self._top_feature,
             self._column_summary_stat,
         ]
-        for handler in handlers:
-            answer = handler(
-                goal_lower, columns, data_quality, statistics, outliers,
-                correlations, clustering, feature_importance, ingestion_output,
-            )
-            if answer is not None:
-                return answer
-        return None
+        # Nothing computed yet means nothing for these handlers to read; the
+        # row lookup below needs only the data itself, so it still gets a turn.
+        if columns or "row_count" in ingestion_output:
+            for handler in handlers:
+                answer = handler(
+                    goal_lower, columns, data_quality, statistics, outliers,
+                    correlations, clustering, feature_importance, ingestion_output,
+                )
+                if answer is not None:
+                    return answer
+
+        # Last, so that every established handler keeps priority. A question
+        # about the shape of the data should be answered as one even if some
+        # value in the table happens to appear in it.
+        return self._row_lookup(goal, dataframe)
+
+    # ── Row lookup ────────────────────────────────────────────────────────
+
+    def _row_lookup(self, goal: str, df: pd.DataFrame | None) -> QAAnswer | None:
+        """Answer a question about one record, found by name.
+
+        Returns None unless a value from an identifier-like column appears in
+        the question. That deliberately answers nothing for "which country has
+        the most artists" — "country" is a group, not a record, and an
+        aggregate over a group is a different question.
+        """
+        if df is None or len(df) == 0:
+            return None
+
+        identifiers = _identifier_columns(df)
+        if not identifiers:
+            return None
+
+        goal_normalized = _normalize(goal)
+        if not goal_normalized:
+            return None
+        names = _candidate_names(goal_normalized)
+
+        best: tuple[int, str, int] | None = None  # (match length, column, row position)
+        for column in identifiers:
+            lookup: dict[str, int] = {}
+            for position, raw in enumerate(df[column].to_numpy()):
+                key = _normalize(raw)
+                if len(key) >= MIN_ENTITY_CHARS:
+                    lookup.setdefault(key, position)
+            for name in names:  # longest first
+                position = lookup.get(name)
+                if position is not None:
+                    if best is None or len(name) > best[0]:
+                        best = (len(name), column, position)
+                    break
+
+        if best is None:
+            return None
+
+        _, column, position = best
+        return QAAnswer(self._describe_row(df, position, column))
+
+    @staticmethod
+    def _describe_row(df: pd.DataFrame, position: int, column: str) -> str:
+        """One row, as Markdown the chat card can render."""
+        row = df.iloc[position]
+        # Column names are stripped for display only. Headers routinely carry
+        # stray whitespace (" Artist Type"), and rendering that back looks like
+        # our mistake rather than the file's.
+        heading = f"**{_display(row[column])}** — {str(column).strip()}, row {position + 1} of {len(df):,}."
+
+        fields: list[str] = []
+        remaining = [c for c in df.columns if c != column]
+        for name in remaining[:MAX_ROW_FIELDS]:
+            fields.append(f"- {str(name).strip()}: {_display(row[name])}")
+        hidden = len(remaining) - len(fields)
+        if hidden > 0:
+            fields.append(f"- …and {hidden} more column(s).")
+
+        return "\n".join([heading, "", *fields])
 
     # ── Handlers (each returns None if its pattern doesn't match) ─────────
 
@@ -274,4 +449,7 @@ class QAAgent:
         value = stat.get(key)
         if value is None:
             return None
-        return QAAnswer(f"The {key} of '{col}' is {_format_stat_value(value)}.")
+        # `_display` rather than "%.3g", which rendered a perfectly good median
+        # of 53,308.9 as "5.33e+04" — a correct answer that looks broken. One
+        # formatter for every number this agent returns.
+        return QAAnswer(f"The {key} of '{col}' is {_display(value)}.")

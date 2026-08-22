@@ -247,15 +247,73 @@ interface ChatMessage {
   // Grounded replies carry their structured form. The LLM returns freeform
   // markdown and has none, which is why `content` remains the fallback.
   cards?: RecommendationCard[];
+  // Knowledge-base documents this reply cited. Replayed to the backend so the
+  // next turn can prefer material the reader hasn't seen yet.
+  sources?: string[];
+}
+
+/** One turn as the backend reads it — mirrors schemas/analysis.py::ConversationTurn. */
+interface ConversationTurn {
+  role: 'user' | 'assistant';
+  content: string;
+  sources: string[];
+}
+
+// How many turns travel with a follow-up, and how much of each. The backend
+// resolves a follow-up against the most recent question and uses the rest only
+// to know what has already been cited, so a long tail costs payload without
+// buying anything. Assistant replies are five recommendation cards flattened
+// into prose, hence the per-turn trim.
+const CONVERSATION_TURNS_SENT = 8;
+const CONVERSATION_CHARS_PER_TURN = 1000;
+
+/**
+ * The conversation so far, as the backend wants it.
+ *
+ * The opening run is included as the first exchange even though it never went
+ * through the chat box: it *is* the first question and the first answer, and
+ * without it the very first follow-up ("why?", "which of those matters most?")
+ * has nothing to resolve against — the one case where a missing referent is
+ * most likely.
+ */
+function buildConversation(result: AnalysisResult, history: ChatMessage[]): ConversationTurn[] {
+  const opening: ConversationTurn[] = [
+    { role: 'user', content: result.goal, sources: [] },
+    { role: 'assistant', content: result.summary || result.recommendations.join(' '), sources: result.rag_sources ?? [] },
+  ];
+
+  const turns: ConversationTurn[] = [
+    ...opening,
+    ...history.map((msg) => ({
+      role: msg.role,
+      content: msg.content,
+      sources: msg.sources ?? [],
+    })),
+  ];
+
+  return turns
+    .slice(-CONVERSATION_TURNS_SENT)
+    .map((turn) => ({ ...turn, content: turn.content.slice(0, CONVERSATION_CHARS_PER_TURN) }))
+    .filter((turn) => turn.content.trim().length > 0);
 }
 
 function formatReply(data: AnalysisResult, mode: 'rag' | 'llm'): string {
   if (data.recommendations.length > 0) {
     return data.recommendations.join('\n\n');
   }
+  // What "no recommendations" means is worth spelling out. The knowledge base
+  // is EDA *methodology*, so a question about a particular record ("tell me
+  // about Drake") has nothing in it to ground against — and the honest answer
+  // is to say so and point at the tool that can, rather than return the
+  // nearest methodology document and let it read as an answer.
   return mode === 'llm'
     ? "The LLM didn't return a usable response — try rephrasing."
-    : "I couldn't ground a recommendation for that — try rephrasing.";
+    : "I couldn't ground that in the knowledge base. This chat is grounded in " +
+      "**analysis methodology** — how to treat missing values, choose a chart, read a " +
+      "correlation — so it can't look up individual records or values.\n\n" +
+      "For a question about specific rows in your data, open the dataset and use the " +
+      "**Query** tab: it takes the same plain-English question and gives you the actual rows back. " +
+      "Or ask this in **LLM (Gemini)** mode, which reasons over the computed statistics instead of citing sources.";
 }
 
 /**
@@ -578,6 +636,10 @@ export default function AnalysisResultPage() {
       // conversation's actual root regardless of which run in the thread
       // that happens to be, so every follow-up lands in the same thread.
       formData.append('root_run_id', params.id);
+      // Built from `chatHistory` as it stood *before* this question was
+      // appended above — the new turn is the goal, not part of the history it
+      // is being resolved against.
+      formData.append('conversation', JSON.stringify(buildConversation(result, chatHistory)));
       if (result.dataset_id) {
         // Re-references the same uploaded dataset server-side — no
         // re-upload needed, and the full pipeline (real stats + RAG)
@@ -606,6 +668,7 @@ export default function AnalysisResultPage() {
           content: reply,
           mode: (data.mode as 'rag' | 'llm') ?? chatMode,
           cards: cards.length > 0 ? cards : undefined,
+          sources: data.rag_sources ?? [],
         },
       ]);
     } catch (err) {
