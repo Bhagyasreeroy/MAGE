@@ -146,3 +146,27 @@ class TestSummaryStatQuestions:
         answer = qa.try_answer("what is the mean of region", mining, ingestion)
         assert answer is not None
         assert "isn't numeric" in answer.text
+
+    def test_highest_is_recognized_as_max(self, qa: QAAgent, mining_and_ingestion) -> None:
+        """'highest' is the everyday phrasing a real user reaches for — not
+        recognizing it as 'max' silently fell through to the RAG path, which
+        (having nothing goal-specific to say) produced near-duplicate
+        recommendations across unrelated follow-up questions."""
+        mining, ingestion = mining_and_ingestion
+        answer = qa.try_answer("what is the highest revenue", mining, ingestion)
+        assert answer is not None
+        assert "revenue" in answer.text
+        assert f"{mining['statistics']['revenue']['max']:g}" in answer.text.replace(",", "")
+
+    def test_lowest_is_recognized_as_min(self, qa: QAAgent, mining_and_ingestion) -> None:
+        mining, ingestion = mining_and_ingestion
+        answer = qa.try_answer("what is the lowest revenue", mining, ingestion)
+        assert answer is not None
+        assert f"{mining['statistics']['revenue']['min']:g}" in answer.text.replace(",", "")
+
+    def test_large_value_is_not_scientific_notation(self, qa: QAAgent) -> None:
+        mining = {"statistics": {"total_gross": {"type": "numeric", "max": 61200.0}}}
+        answer = qa.try_answer("what is the highest total_gross", mining, {})
+        assert answer is not None
+        assert "e+" not in answer.text
+        assert "61,200" in answer.text

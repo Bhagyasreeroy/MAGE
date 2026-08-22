@@ -32,6 +32,16 @@ class QAAnswer:
     source: str | None = None
 
 
+def _format_stat_value(value: float) -> str:
+    """Comma-grouped for values that would otherwise print in scientific
+    notation — %.3g only keeps 3 significant digits, which turns a $61,200
+    max into "6.12e+04". Small values stay on %.3g, where it reads fine."""
+    if abs(value) >= 1000:
+        text = f"{value:,.2f}"
+        return text[:-3] if text.endswith(".00") else text
+    return f"{value:.3g}"
+
+
 def _columns_mentioned(goal_lower: str, columns: list[str]) -> list[str]:
     """Column names that appear as whole words in the goal text, longest first
     (so 'monthly_revenue' matches before a coincidental 'revenue' substring)."""
@@ -225,7 +235,19 @@ class QAAgent:
         return QAAnswer(f"'{top['feature']}' has the highest feature importance (PCA loading score {top['score']}).")
 
     def _column_summary_stat(self, goal_lower, columns, data_quality, statistics, outliers, correlations, clustering, feature_importance, ingestion_output) -> QAAnswer | None:
-        stat_word = next((w for w in ("mean", "median", "average", "min", "minimum", "max", "maximum", "std", "stdev") if w in goal_lower), None)
+        stat_word = next(
+            (
+                w
+                for w in (
+                    "mean", "median", "average",
+                    "min", "minimum", "lowest", "smallest",
+                    "max", "maximum", "highest", "largest", "biggest",
+                    "std", "stdev",
+                )
+                if w in goal_lower
+            ),
+            None,
+        )
         if stat_word is None:
             return None
         mentioned = _columns_mentioned(goal_lower, columns)
@@ -235,8 +257,13 @@ class QAAgent:
         stat = statistics.get(col, {})
         if stat.get("type") != "numeric":
             return QAAnswer(f"'{col}' isn't numeric, so {stat_word} isn't defined for it.")
-        key = {"average": "mean", "minimum": "min", "maximum": "max", "stdev": "std"}.get(stat_word, stat_word)
+        key = {
+            "average": "mean",
+            "minimum": "min", "lowest": "min", "smallest": "min",
+            "maximum": "max", "highest": "max", "largest": "max", "biggest": "max",
+            "stdev": "std",
+        }.get(stat_word, stat_word)
         value = stat.get(key)
         if value is None:
             return None
-        return QAAnswer(f"The {key} of '{col}' is {value:.3g}.")
+        return QAAnswer(f"The {key} of '{col}' is {_format_stat_value(value)}.")

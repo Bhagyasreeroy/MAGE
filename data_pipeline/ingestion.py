@@ -38,6 +38,35 @@ _RAGGED_ROW_RE = re.compile(
 )
 
 
+def _coerce_formatted_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Recover numeric dtype for columns that arrive as formatted text —
+    "$1,234.56", "(42.00)" for a negative, plain "1,234" with a thousands
+    separator. Left as strings, these get treated as categorical everywhere
+    downstream (MiningAgent's numeric/categorical split relies on dtype, not
+    content), so a currency column like TOTAL_GROSS silently loses every
+    numeric stat, and factual questions about it ("what's the highest
+    total gross") have nothing to compute from.
+
+    Conservative: a column converts only if every non-empty value parses
+    cleanly, so a genuinely mixed or categorical column is left untouched.
+    """
+    for col in df.columns:
+        if pd.api.types.is_numeric_dtype(df[col]):
+            continue
+        cleaned = (
+            df[col]
+            .astype(str)
+            .str.strip()
+            .str.replace(r"^\((.*)\)$", r"-\1", regex=True)  # (42.00) -> -42.00
+            .str.replace(r"[\$,%]", "", regex=True)
+        )
+        converted = pd.to_numeric(cleaned, errors="coerce")
+        non_empty = df[col].replace("", pd.NA).notna()
+        if converted.notna().sum() == non_empty.sum() and converted.notna().any():
+            df[col] = converted
+    return df
+
+
 def _describe_parser_error(exc: Exception) -> str:
     """Turn a pandas tokenizing error into something a reader can act on.
 
@@ -206,13 +235,14 @@ class DataIngestionEngine:
                 sep = self._delimiter_after_sniff_failure(sample_text)
 
         try:
-            return pd.read_csv(io.StringIO(sample_text), sep=sep, **kwargs)
+            df = pd.read_csv(io.StringIO(sample_text), sep=sep, **kwargs)
         except pd.errors.EmptyDataError as exc:
             raise IngestionError("Empty file.") from exc
         except pd.errors.ParserError as exc:
             raise IngestionError(_describe_parser_error(exc)) from exc
         except Exception as exc:
             raise IngestionError(f"Failed to parse delimited file: {exc}") from exc
+        return _coerce_formatted_numeric_columns(df)
 
     @staticmethod
     def _delimiter_after_sniff_failure(sample_text: str) -> str:
@@ -254,7 +284,7 @@ class DataIngestionEngine:
     def _load_xlsx(self, content: bytes, **kwargs: Any) -> pd.DataFrame:
         """Parse Excel (XLSX/XLS) contents."""
         try:
-            return pd.read_excel(io.BytesIO(content), engine="openpyxl", **kwargs)
+            df = pd.read_excel(io.BytesIO(content), engine="openpyxl", **kwargs)
         except ImportError as exc:
             raise IngestionError(
                 f"Cannot read Excel file: a required library is missing ({exc}). "
@@ -262,6 +292,7 @@ class DataIngestionEngine:
             ) from exc
         except Exception as exc:
             raise IngestionError(f"Failed to parse Excel file: {exc}") from exc
+        return _coerce_formatted_numeric_columns(df)
 
     def _load_pdf(self, content: bytes, *, page: int | None = None, table_index: int = 0, **kwargs: Any) -> pd.DataFrame:
         """
@@ -315,12 +346,7 @@ class DataIngestionEngine:
         except Exception as exc:  # noqa: BLE001
             raise IngestionError(f"Failed to build DataFrame from PDF table: {exc}") from exc
 
-        # PDF cells arrive as strings; recover numeric dtypes where unambiguous.
-        for col in df.columns:
-            converted = pd.to_numeric(df[col], errors="coerce")
-            if converted.notna().sum() == df[col].replace("", pd.NA).notna().sum() and converted.notna().any():
-                df[col] = converted
-        return df
+        return _coerce_formatted_numeric_columns(df)
 
     def load_from_url(self, url: str, *, format_hint: str | None = None, timeout: float = 30.0, **kwargs: Any) -> pd.DataFrame:
         """

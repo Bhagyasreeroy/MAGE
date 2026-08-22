@@ -51,6 +51,31 @@ class TestDataIngestionEngineFormats:
         assert len(df) == 2
         assert list(df.columns) == ["a", "b"]
 
+    def test_currency_formatted_column_is_recovered_as_numeric(self, tmp_path) -> None:
+        """A column like TOTAL_GROSS arriving as '$52,345.67' strings reads
+        as dtype=str by default, which silently drops it out of every
+        numeric stat (mean/min/max) downstream — and out of factual
+        questions like "what's the highest total gross" along with it."""
+        p = tmp_path / "payroll.csv"
+        p.write_text('name,total_gross\nAlice,"$52,345.67"\nBob,"$61,200.00"\nCarol,"$45,900.50"\n')
+        df = DataIngestionEngine().load(str(p))
+        assert df["total_gross"].tolist() == [52345.67, 61200.00, 45900.50]
+
+    def test_parenthesized_negative_is_recovered(self, tmp_path) -> None:
+        p = tmp_path / "ledger.csv"
+        p.write_text("name,balance\nAlice,\"(42.50)\"\nBob,100.00\n")
+        df = DataIngestionEngine().load(str(p))
+        assert df["balance"].tolist() == [-42.50, 100.00]
+
+    def test_genuinely_categorical_column_is_left_as_text(self, tmp_path) -> None:
+        """A mixed column ('N/A' alongside real values) must not be forced
+        into numeric — the conservative all-or-nothing rule exists exactly
+        for this case."""
+        p = tmp_path / "mixed.csv"
+        p.write_text("name,status\nAlice,Active\nBob,N/A\nCarol,Pending\n")
+        df = DataIngestionEngine().load(str(p))
+        assert not df["status"].dtype.kind in "if"
+
 
 class TestDataIngestionEngineErrors:
     """The engine fails cleanly with informative exceptions."""
