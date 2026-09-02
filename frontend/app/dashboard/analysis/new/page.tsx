@@ -12,6 +12,7 @@ import {
   type SampleDataset,
 } from '../../../lib/api';
 import { useAnalysisStream } from '../../../lib/use-analysis-stream';
+import { UPLOAD_ACCEPT, isOcrFile, uploadAnyFile } from '../../../lib/upload-routing';
 import { useVoiceInput } from '../../../lib/use-voice-input';
 
 type ExpertiseLevel = 'beginner' | 'intermediate' | 'expert';
@@ -50,6 +51,14 @@ export default function NewAnalysisPage() {
   const [goal, setGoal] = useState('');
   const [expertiseLevel, setExpertiseLevel] = useState<ExpertiseLevel>('intermediate');
   const [file, setFile] = useState<File | null>(null);
+  // An image or PDF is OCR'd the moment it is chosen, because the result is
+  // what the user needs to see before committing to a run. It becomes a real
+  // dataset immediately, so the run references it by id — `file` stays null
+  // for this path, and `ocrDataset` carries it instead.
+  const [ocrDataset, setOcrDataset] = useState<
+    { id: string; filename: string; rowCount: number; columnCount: number; preview: string } | null
+  >(null);
+  const [isOcrRunning, setIsOcrRunning] = useState(false);
   // Covers the upload that happens *before* the socket opens; once the stream
   // starts, `stream.phase` is the source of truth for progress.
   const [isUploading, setIsUploading] = useState(false);
@@ -83,7 +92,7 @@ export default function NewAnalysisPage() {
 
   // Either source satisfies the run: freshly-chosen file bytes, or the id of
   // a sample already persisted server-side.
-  const hasDataset = file !== null || sampleDatasetId !== null;
+  const hasDataset = file !== null || sampleDatasetId !== null || ocrDataset !== null;
 
   const stream = useAnalysisStream();
   const isRunning = isUploading || stream.phase === 'connecting' || stream.phase === 'running';
@@ -123,6 +132,47 @@ export default function NewAnalysisPage() {
     setSampleDatasetId(null);
   }
 
+  /**
+   * Take whatever file was chosen and put it where it belongs.
+   *
+   * A CSV is simply held until Run, exactly as before. An image or PDF is
+   * OCR'd right away instead: the extracted table is the thing the user needs
+   * to check before spending a pipeline run on it, and waiting until Run to
+   * discover the OCR read nothing would be the wrong moment to find out.
+   */
+  async function handleFileChosen(chosen: File | null) {
+    clearSample();
+    setError(null);
+    setOcrDataset(null);
+
+    if (!chosen) {
+      setFile(null);
+      return;
+    }
+
+    if (!isOcrFile(chosen)) {
+      setFile(chosen);
+      return;
+    }
+
+    setFile(null);
+    setIsOcrRunning(true);
+    try {
+      const result = await uploadAnyFile(chosen);
+      setOcrDataset({
+        id: result.datasetId,
+        filename: result.filename,
+        rowCount: result.rowCount,
+        columnCount: result.columnCount,
+        preview: result.extractedPreview ?? '',
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not read that file.');
+    } finally {
+      setIsOcrRunning(false);
+    }
+  }
+
   // Hold on the finished trail briefly before navigating, so the last agent's
   // result is legible rather than flashing past on the way to the report.
   useEffect(() => {
@@ -143,7 +193,13 @@ export default function NewAnalysisPage() {
     try {
       // The socket carries a dataset id, not file bytes, so any new upload is
       // persisted over HTTP first. A selected sample dataset already has an id.
-      const datasetId = file ? (await ingestDataset(file)).dataset_id : sampleDatasetId;
+      // An OCR'd image was already persisted as a dataset when it was
+      // attached, so there is nothing left to upload for that path.
+      const datasetId = ocrDataset
+        ? ocrDataset.id
+        : file
+          ? (await ingestDataset(file)).dataset_id
+          : sampleDatasetId;
       stream.start({ goal, expertiseLevel, datasetId });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
@@ -255,11 +311,12 @@ export default function NewAnalysisPage() {
             ref={fileInputRef}
             id="dataset-file"
             type="file"
-            accept=".csv,.tsv,.json,.parquet,.xlsx,.xls"
+            accept={UPLOAD_ACCEPT}
             className="hidden"
             onChange={(e) => {
-              setFile(e.target.files?.[0] ?? null);
-              clearSample();
+              const chosen = e.target.files?.[0] ?? null;
+              handleFileChosen(chosen);
+              e.target.value = '';
             }}
           />
           <button
@@ -267,19 +324,40 @@ export default function NewAnalysisPage() {
             onClick={() => fileInputRef.current?.click()}
             className="w-full bg-cream/50 border border-dashed border-dusty-rose/40 rounded-2xl px-5 py-6 text-sm text-navy/60 hover:border-lavender hover:text-navy transition-all text-left"
           >
-            {file ? (
+            {isOcrRunning ? (
+              <span className="text-navy font-medium">Reading the text in your file…</span>
+            ) : ocrDataset ? (
+              <span className="text-navy font-medium">
+                {ocrDataset.filename} — {ocrDataset.rowCount} rows × {ocrDataset.columnCount} columns,
+                read from your file
+              </span>
+            ) : file ? (
               <span className="text-navy font-medium">
                 {file.name} — {(file.size / 1024).toFixed(1)} KB
               </span>
             ) : (
-              'Click to choose a CSV, TSV, JSON, Parquet, or Excel file…'
+              'Click to choose a data file, or a photo, scan or PDF of a table…'
             )}
           </button>
-          {file && (
+
+          {/* What OCR actually read. Shown before the run, not after, so a
+              misread table is caught while it still costs nothing to fix. */}
+          {ocrDataset && ocrDataset.preview && (
+            <div className="mt-4 bg-cream/40 border border-dusty-rose/20 rounded-2xl p-4">
+              <p className="text-[10px] font-bold text-navy/40 uppercase tracking-widest mb-2">
+                Extracted text — check this looks right
+              </p>
+              <pre className="text-xs text-navy/70 whitespace-pre-wrap font-mono leading-relaxed max-h-32 overflow-y-auto">
+                {ocrDataset.preview}
+              </pre>
+            </div>
+          )}
+          {(file || ocrDataset) && (
             <button
               type="button"
               onClick={() => {
                 setFile(null);
+                setOcrDataset(null);
                 if (fileInputRef.current) fileInputRef.current.value = '';
               }}
               className="text-xs text-navy/40 mt-3 underline underline-offset-4 hover:text-navy transition-colors"

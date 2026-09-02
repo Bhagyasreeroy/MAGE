@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { authFetchFormData, deleteDataset, fetchDatasets, type DatasetSummary } from '../../lib/api';
+import { deleteDataset, fetchDatasets, type DatasetSummary } from '../../lib/api';
+import { UPLOAD_ACCEPT, uploadAnyFile } from '../../lib/upload-routing';
 
 const FileIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -16,12 +17,6 @@ const UploadIcon = () => (
   </svg>
 );
 
-interface IngestionResult {
-  row_count: number;
-  column_count: number;
-  warnings: string[];
-  dataset_id: string | null;
-}
 
 interface DatasetEntry {
   id: string;
@@ -60,16 +55,15 @@ export default function DatasetsPage() {
     setIsUploading(true);
     setError(null);
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const result = await authFetchFormData<IngestionResult>('/analysis/ingest', formData);
+      // Images and PDFs are OCR'd into a dataset; everything else is
+      // ingested directly. The caller does not need to know which happened.
+      const result = await uploadAnyFile(file);
       setDatasets((prev) => [
         {
-          id: result.dataset_id ?? crypto.randomUUID(),
-          name: file.name,
-          rowCount: result.row_count,
-          columnCount: result.column_count,
+          id: result.datasetId || crypto.randomUUID(),
+          name: result.filename,
+          rowCount: result.rowCount,
+          columnCount: result.columnCount,
           warnings: result.warnings,
         },
         ...prev,
@@ -117,7 +111,7 @@ export default function DatasetsPage() {
       <input
         ref={fileInputRef}
         type="file"
-        accept=".csv,.tsv,.json,.parquet,.xlsx,.xls"
+        accept={UPLOAD_ACCEPT}
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];
@@ -140,10 +134,10 @@ export default function DatasetsPage() {
           <UploadIcon />
         </div>
         <p className="text-navy font-bold text-xl mb-2">
-          {isUploading ? 'Profiling…' : 'Drag & drop your file here'}
+          {isUploading ? 'Reading your file…' : 'Drag & drop your file here'}
         </p>
         <p className="text-navy/40 font-light mb-6">
-          Supports CSV, TSV, JSON, Parquet, and Excel files
+          CSV, TSV, JSON, Parquet and Excel — or a photo, scan or PDF of a table, which is read with OCR
         </p>
         <button
           type="button"

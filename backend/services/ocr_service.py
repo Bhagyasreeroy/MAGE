@@ -9,6 +9,7 @@ plain text, structured table data, and line-by-line output.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 from typing import Any
@@ -23,6 +24,48 @@ logger = logging.getLogger(__name__)
 class OCRServiceError(Exception):
     """Custom exception raised when OCR processing fails."""
     pass
+
+
+
+# OCR.space throttles free API keys when the shared service is busy, answering
+# 503 with "E571: Free OCR API overloaded currently ... Please retry in a few
+# minutes". It clears on its own, so a couple of quick retries turn a common
+# transient failure into a successful upload. A PRO key is never throttled.
+OCR_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+OCR_MAX_ATTEMPTS = 3
+OCR_RETRY_BACKOFF_SECONDS = 1.5
+
+
+def _upstream_detail(exc: httpx.HTTPStatusError) -> str:
+    """Turn an OCR.space error response into something worth showing a user.
+
+    The API explains its refusals in the body ("E556: File too large. Max
+    1.5 MB for Free Plan"), and that sentence is the only actionable part of
+    the failure. Reporting the status code alone discards it. Falls back to
+    the code when the body is empty or not the shape we expect.
+    """
+    status_code = exc.response.status_code
+    try:
+        body = exc.response.json()
+    except ValueError:
+        body = None
+
+    message = ""
+    if isinstance(body, dict):
+        raw = body.get("error") or body.get("ErrorMessage") or ""
+        if isinstance(raw, list):
+            raw = "; ".join(str(item) for item in raw)
+        message = str(raw).strip()
+
+    if not message:
+        text = (exc.response.text or "").strip()
+        # A short plain-text body is usually the explanation itself; a long
+        # one is an HTML error page, which helps nobody.
+        message = text if 0 < len(text) <= 200 else ""
+
+    return f"OCR API error ({status_code}): {message}" if message else (
+        f"OCR API returned status code {status_code}"
+    )
 
 
 class OCRSpaceService:
@@ -75,13 +118,10 @@ class OCRSpaceService:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(self.api_url, data=data, files=files)
-                response.raise_for_status()
-                payload = response.json()
+            payload = await self._post_with_retry(data=data, files=files)
         except httpx.HTTPStatusError as exc:
             logger.error("OCR.space API HTTP error %s: %s", exc.response.status_code, exc.response.text)
-            raise OCRServiceError(f"OCR API returned status code {exc.response.status_code}") from exc
+            raise OCRServiceError(_upstream_detail(exc)) from exc
         except httpx.RequestError as exc:
             logger.error("OCR.space API connection error: %s", exc)
             raise OCRServiceError(f"Network error connecting to OCR API: {exc}") from exc
@@ -116,15 +156,49 @@ class OCRSpaceService:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(self.api_url, data=data)
-                response.raise_for_status()
-                payload = response.json()
+            payload = await self._post_with_retry(data=data)
+        except httpx.HTTPStatusError as exc:
+            logger.error("OCR.space API HTTP error %s: %s", exc.response.status_code, exc.response.text)
+            raise OCRServiceError(_upstream_detail(exc)) from exc
         except Exception as exc:
             logger.error("Failed to process OCR from URL: %s", exc)
             raise OCRServiceError(f"OCR URL processing failed: {exc}") from exc
 
         return self._format_ocr_response(payload)
+
+    async def _post_with_retry(self, data: dict[str, Any], files: Any = None) -> dict[str, Any]:
+        """POST once, retrying only the statuses that clear on their own.
+
+        A 4xx means the file itself was rejected and will be rejected again,
+        so retrying it just spends quota and makes the user wait. Overload and
+        gateway errors are the opposite: the same request usually succeeds a
+        moment later.
+        """
+        last_exc: httpx.HTTPStatusError | None = None
+
+        for attempt in range(1, OCR_MAX_ATTEMPTS + 1):
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(self.api_url, data=data, files=files)
+
+            if response.status_code == 200:
+                return response.json()
+
+            exc = httpx.HTTPStatusError(
+                f"HTTP {response.status_code}", request=response.request, response=response
+            )
+            if response.status_code not in OCR_RETRY_STATUSES:
+                raise exc
+
+            last_exc = exc
+            if attempt < OCR_MAX_ATTEMPTS:
+                logger.warning(
+                    "OCR.space attempt %d/%d returned %s; retrying.",
+                    attempt, OCR_MAX_ATTEMPTS, response.status_code,
+                )
+                await asyncio.sleep(OCR_RETRY_BACKOFF_SECONDS * attempt)
+
+        assert last_exc is not None
+        raise last_exc
 
     def _format_ocr_response(self, payload: dict[str, Any]) -> dict[str, Any]:
         """

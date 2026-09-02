@@ -36,6 +36,79 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ocr", tags=["OCR"])
 
 
+# ── Upload validation ────────────────────────────────────────────────────────
+#
+# OCR is for pictures of text: photos, scans, screenshots, and PDFs. A CSV or
+# XLSX already *is* structured data and belongs in /analysis/ingest, which
+# parses it properly — running it through OCR would be slower, lossy, and
+# would spend an API call to produce a worse version of a file we can already
+# read. So anything else is refused here rather than upstream.
+OCR_IMAGE_EXTENSIONS = frozenset({"png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff", "gif"})
+OCR_DOCUMENT_EXTENSIONS = frozenset({"pdf"})
+OCR_ALLOWED_EXTENSIONS = OCR_IMAGE_EXTENSIONS | OCR_DOCUMENT_EXTENSIONS
+
+# OCR.space's free plan hard-rejects anything larger with an HTTP 413 (verified
+# against the live API: a 4.9 MB photo returns "E556: File too large. Max 1.5 MB
+# for Free Plan"). Checking here turns a wasted round trip into an immediate,
+# specific answer. The browser downsizes oversized images before upload, so in
+# practice this catches PDFs and anything bypassing the UI.
+MAX_OCR_BYTES = 1_572_864  # 1.5 MB
+
+
+def _extension_of(filename: str) -> str:
+    return filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+
+def _validate_url(url: str) -> None:
+    """Apply the upload type rule to a remote URL.
+
+    Only an explicit, recognisably-wrong extension is refused. Many legitimate
+    image URLs carry no extension at all (CDNs, signed links), so an unknown
+    one is passed upstream rather than guessed at — refusing those would block
+    more real images than it would save wasted calls.
+    """
+    path = url.split("?", 1)[0].split("#", 1)[0]
+    extension = _extension_of(path.rsplit("/", 1)[-1])
+    if extension and extension not in OCR_ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=(
+                f"Unsupported file type '.{extension}'. OCR accepts images "
+                f"(PNG, JPG, JPEG, WEBP, BMP, TIFF, GIF) and PDF."
+            ),
+        )
+
+
+def _validate_upload(filename: str, content: bytes) -> None:
+    """Refuse anything OCR cannot or should not process. Raises HTTPException."""
+    extension = _extension_of(filename)
+    if extension not in OCR_ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=(
+                f"Unsupported file type '.{extension or 'unknown'}'. OCR accepts images "
+                f"(PNG, JPG, JPEG, WEBP, BMP, TIFF, GIF) and PDF. For a CSV, Excel or "
+                f"Parquet file, upload it as a dataset instead — it is read directly, "
+                f"with no OCR needed."
+            ),
+        )
+
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file is empty.",
+        )
+
+    if len(content) > MAX_OCR_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=(
+                f"File is too large ({len(content) / 1_048_576:.1f} MB). The OCR service "
+                f"accepts at most 1.5 MB. Try a smaller image, or a lower-resolution scan."
+            ),
+        )
+
+
 @router.post(
     "/process-file",
     response_model=OCRResponse,
@@ -59,11 +132,7 @@ async def process_file(
         )
 
     content = await file.read()
-    if not content:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Uploaded file is empty.",
-        )
+    _validate_upload(file.filename, content)
 
     try:
         result = await ocr_service.parse_image_bytes(
@@ -102,6 +171,8 @@ async def process_url(
     """
     Pass an HTTP/HTTPS image or PDF URL to perform OCR processing via OCR.space API.
     """
+    _validate_url(payload.url)
+
     try:
         result = await ocr_service.parse_image_url(
             url=payload.url,
@@ -151,11 +222,7 @@ async def convert_to_dataset(
         )
 
     content = await file.read()
-    if not content:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Uploaded file is empty.",
-        )
+    _validate_upload(file.filename, content)
 
     try:
         result = await ocr_service.parse_image_bytes(
@@ -170,6 +237,19 @@ async def convert_to_dataset(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
+
+    # OCR that found nothing would otherwise be persisted as a 0-row dataset
+    # reported as a success — which then fails, confusingly, at every
+    # downstream step. Saying so here is both honest and more useful.
+    if not result.get("full_text", "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                "No text was found in that file, so there is nothing to turn into a "
+                "dataset. Check the image is a photo or scan of a table, is the right "
+                "way up, and is in focus."
+            ),
+        )
 
     csv_content = ocr_service.convert_ocr_to_csv(result)
     csv_bytes = csv_content.encode("utf-8")

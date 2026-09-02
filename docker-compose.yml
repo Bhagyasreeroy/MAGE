@@ -34,6 +34,13 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # OCR.space backs image/PDF -> dataset. Same trap as GEMINI_API_KEY
+      # above: unforwarded, the service falls back to the public "helloworld"
+      # demo key, which is capped near 10 requests per 10 minutes and shared
+      # globally — so OCR works from the host and mysteriously rate-limits
+      # inside the container.
+      - OCR_SPACE_API_KEY=${OCR_SPACE_API_KEY:-}
+      - OCR_SPACE_API_URL=${OCR_SPACE_API_URL:-https://api.ocr.space/parse/image}
       - VECTOR_STORE_BACKEND=${VECTOR_STORE_BACKEND:-chroma}
       - FAISS_INDEX_PATH=/app/data/faiss_index
       - CHROMA_DB_PATH=/app/data/chroma_db

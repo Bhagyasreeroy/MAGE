@@ -470,6 +470,29 @@ export async function ingestDataset(file: File): Promise<IngestionResult> {
   return authFetchFormData<IngestionResult>('/analysis/ingest', formData);
 }
 
+export interface OCRToDatasetResult {
+  dataset_id: string;
+  filename: string;
+  row_count: number;
+  column_count: number;
+  message: string;
+  full_text_preview: string;
+}
+
+/**
+ * Run OCR on an image or PDF and persist the extracted table as a dataset.
+ *
+ * The counterpart to `ingestDataset` for files that are pictures of data
+ * rather than data: a photographed table, a scanned invoice, a screenshot.
+ * Returns the same `dataset_id` shape, so a caller can treat the result
+ * exactly like an ordinary upload from that point on.
+ */
+export async function convertImageToDataset(file: File): Promise<OCRToDatasetResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  return authFetchFormData<OCRToDatasetResult>('/api/v1/ocr/convert-to-dataset', formData);
+}
+
 export interface TranscriptionResult {
   transcript: string;
 }
