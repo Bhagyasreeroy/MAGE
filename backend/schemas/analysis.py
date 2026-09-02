@@ -481,3 +481,16 @@ class ExplainResult(BaseModel):
     synthesized: bool = Field(
         ..., description="True if the LLM synthesized across multiple sources; False if this is a raw excerpt."
     )
+
+
+class TranscriptionResult(BaseModel):
+    """Response for POST /analysis/transcribe — voice input for the goal box.
+
+    Nothing is persisted: the audio is transcribed and discarded, and the
+    transcript's only home is the textarea the user is about to edit. An
+    empty `transcript` is a valid, non-error outcome meaning no
+    intelligible speech was heard."""
+
+    transcript: str = Field(
+        ..., description="The spoken audio as English text; empty if no speech was detected."
+    )

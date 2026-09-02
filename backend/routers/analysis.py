@@ -5,6 +5,7 @@ Endpoints:
     POST /analysis/run              - trigger a full MAGE analysis pipeline run
     WS   /analysis/stream           - run the pipeline, streaming each agent step live
     POST /analysis/ingest           - upload a CSV or XLSX file and profile it
+    POST /analysis/transcribe       - transcribe recorded speech into text (voice input)
     GET  /analysis/sample-datasets  - list bundled demo datasets
     POST /analysis/sample-datasets/{filename}/load - ingest a bundled demo dataset
     GET  /analysis/knowledge-sources - list the RAG knowledge base documents
@@ -62,6 +63,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from agents.explain_agent import ExplainAgent
 from agents.ingestion_agent import IngestionAgent
+from agents.llm_client import GeminiClient, LLMError
 from agents.orchestrator import build_recommendation_cards
 from backend.core.database import async_session, get_db
 from backend.core.rate_limit import (
@@ -95,6 +97,7 @@ from backend.schemas.analysis import (
     RecommendationMode,
     SampleDataset,
     ShareStatus,
+    TranscriptionResult,
     TransformRequest,
 )
 from backend.schemas.auth import MessageResponse
@@ -110,6 +113,7 @@ router = APIRouter()
 _orchestrator_service = OrchestratorService()
 _ingestion_agent = IngestionAgent()
 _explain_agent = ExplainAgent()
+_gemini_client = GeminiClient()
 
 # Bundled demo datasets a user can load without having the file on their own
 # machine. Keyed by filename in data/samples/; anything in that directory but
@@ -548,6 +552,96 @@ async def ingest_file(
     )
     result.dataset_id = dataset.id
     return result
+
+
+# ── Voice input ──────────────────────────────────────────────────────────────
+#
+# The browser records with MediaRecorder and re-encodes to 16 kHz mono WAV
+# client-side, because Gemini's inline-audio support covers wav/mp3/ogg/aac/
+# flac but *not* the webm Chrome's MediaRecorder produces by default. webm and
+# mp4 stay on the allowlist regardless: they are what a browser lacking the
+# client-side encode would send, and Gemini is often willing to read opus in a
+# webm container even though it is undocumented. A call that usually works
+# beats a guaranteed 415.
+TRANSCRIBE_MIME_TYPES = frozenset(
+    {
+        "audio/wav",
+        "audio/x-wav",
+        "audio/wave",
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/ogg",
+        "audio/aac",
+        "audio/flac",
+        "audio/webm",
+        "audio/mp4",
+    }
+)
+
+# Deliberately *not* settings.max_upload_size_mb (100 MB): that ceiling is
+# sized for a tabular dataset, whereas 100 MB of audio is hours of speech and
+# a Gemini bill to match. The 90-second cap the recorder enforces yields well
+# under 3 MB at 16 kHz mono, so this leaves generous headroom.
+MAX_AUDIO_BYTES = 10 * 1024 * 1024
+
+
+@router.post(
+    "/transcribe",
+    response_model=TranscriptionResult,
+    status_code=status.HTTP_200_OK,
+    summary="Transcribe recorded speech into text for the goal box",
+)
+@limiter.limit(llm_limit, exempt_when=limit_exempt_when_disabled)
+async def transcribe_audio(
+    request: Request,
+    audio: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+) -> TranscriptionResult:
+    """Stateless and non-persisting — the audio is transcribed and dropped;
+    only the text travels back. Rate-limited alongside the other endpoints
+    that spend Gemini quota, since that is the resource actually at stake."""
+    if not _gemini_client.is_configured:
+        # Distinct from a transcription failure: nothing the user does will
+        # fix it, so say plainly that it is the server that is unconfigured.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Voice input is unavailable: no Gemini API key is configured on the server.",
+        )
+
+    # Browsers append codec parameters ("audio/webm;codecs=opus"); Gemini wants
+    # the bare type.
+    mime_type = (audio.content_type or "").split(";")[0].strip().lower()
+    if mime_type not in TRANSCRIBE_MIME_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"Unsupported audio format '{mime_type or 'unknown'}'.",
+        )
+
+    content = await audio.read()
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The uploaded recording is empty.",
+        )
+    if len(content) > MAX_AUDIO_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=f"Recording is too large. Keep it under {MAX_AUDIO_BYTES // (1024 * 1024)} MB.",
+        )
+
+    try:
+        # GeminiClient is synchronous (httpx.post plus sleep-based backoff), and
+        # an audio call can run for the better part of a minute — long enough
+        # that holding the event loop would stall every other request.
+        transcript = await asyncio.to_thread(_gemini_client.transcribe, content, mime_type)
+    except LLMError as exc:
+        logger.warning("Transcription failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not transcribe the recording. Try again, or type your goal instead.",
+        ) from exc
+
+    return TranscriptionResult(transcript=transcript)
 
 
 @router.get(

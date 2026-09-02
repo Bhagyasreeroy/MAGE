@@ -9,6 +9,10 @@ agents/recommendation_agent.py). This is the project's first real LLM
 call, used only when a user explicitly opts into "LLM mode" in the
 follow-up chat; the RAG path is untouched.
 
+It also backs voice input: ``transcribe()`` sends recorded audio to the
+same generateContent endpoint, which is why voice-to-text added no new
+dependency and no second API key.
+
 Uses plain httpx (already a dependency, used the same way for REST
 ingestion in data_pipeline/ingestion.py) rather than the official Google
 SDK, so no new dependency is needed. The module-level ``httpx.post`` call
@@ -19,9 +23,11 @@ used for ingestion's outbound HTTP calls.
 
 from __future__ import annotations
 
+import base64
 import logging
 import random
 import time
+from typing import Any
 
 import httpx
 
@@ -37,6 +43,19 @@ GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 # what's currently live on the configured key.
 DEFAULT_MODEL = "gemini-2.5-flash"
 DEFAULT_TIMEOUT = 20.0
+# Audio takes materially longer to process than a text prompt of equivalent
+# "size", and a 20s ceiling was observed cutting off ~30s clips mid-flight.
+TRANSCRIBE_TIMEOUT = 60.0
+
+# Without an explicit "output only the transcript" instruction, Gemini
+# prefixes its answer with conversational scaffolding ("Sure! Here is the
+# transcription:"), which would land verbatim in the user's goal box.
+TRANSCRIBE_PROMPT = (
+    "Transcribe the speech in this audio to English text, verbatim. "
+    "Output only the transcript itself: no preamble, no explanation, no "
+    "quotation marks, no speaker labels, no timestamps. If the audio "
+    "contains no intelligible speech, output nothing at all."
+)
 
 # NFR-03 — bounded exponential backoff.
 #
@@ -80,6 +99,54 @@ class GeminiClient:
             If no API key is configured, the request fails, or the
             response doesn't contain the expected generated-text shape.
         """
+        return self._generate_content([{"text": prompt}], timeout=timeout)
+
+    def transcribe(
+        self,
+        audio: bytes,
+        mime_type: str,
+        timeout: float = TRANSCRIBE_TIMEOUT,
+    ) -> str:
+        """Transcribe spoken audio to English text.
+
+        `audio` is the raw file bytes and `mime_type` must be one Gemini
+        accepts natively (wav, mp3, ogg, aac, flac, aiff). Notably *not*
+        webm, which is what Chrome's MediaRecorder produces by default —
+        the browser re-encodes to wav before upload, so that guarantee is
+        the caller's to keep.
+
+        Returns the transcript, stripped. An empty string means Gemini
+        heard no intelligible speech; that is a normal outcome for a
+        recording of silence, not a failure.
+
+        Raises
+        ------
+        LLMError
+            Same conditions as `generate`.
+        """
+        parts: list[dict[str, Any]] = [
+            {"text": TRANSCRIBE_PROMPT},
+            {
+                "inline_data": {
+                    "mime_type": mime_type,
+                    "data": base64.b64encode(audio).decode("ascii"),
+                }
+            },
+        ]
+        return self._generate_content(parts, timeout=timeout, allow_empty=True).strip()
+
+    def _generate_content(
+        self,
+        parts: list[dict[str, Any]],
+        timeout: float,
+        allow_empty: bool = False,
+    ) -> str:
+        """POST one generateContent request, retrying transient failures.
+
+        Shared by every call shape: `parts` is Gemini's content-part list,
+        so a plain text prompt and a prompt-plus-audio request differ only
+        in what the caller assembles, never in how failures are handled.
+        """
         if not self.is_configured:
             raise LLMError("No Gemini API key configured (set GEMINI_API_KEY).")
 
@@ -91,7 +158,7 @@ class GeminiClient:
                 response = httpx.post(
                     url,
                     params={"key": self.api_key},
-                    json={"contents": [{"parts": [{"text": prompt}]}]},
+                    json={"contents": [{"parts": parts}]},
                     timeout=timeout,
                 )
             except httpx.HTTPError as exc:
@@ -102,7 +169,7 @@ class GeminiClient:
                 if response.status_code == 200:
                     try:
                         body = response.json()
-                        return body["candidates"][0]["content"]["parts"][0]["text"]
+                        return self._extract_text(body, allow_empty=allow_empty)
                     except (KeyError, IndexError, ValueError) as exc:
                         # A 200 with an unexpected shape is not transient —
                         # the same prompt will produce the same shape.
@@ -122,6 +189,24 @@ class GeminiClient:
                 time.sleep(delay)
 
         raise LLMError(f"Gemini failed after {MAX_ATTEMPTS} attempts. Last error: {last_error}")
+
+    @staticmethod
+    def _extract_text(body: dict[str, Any], *, allow_empty: bool) -> str:
+        """Pull the generated text out of a 200 response body.
+
+        When `allow_empty`, a candidate carrying no text part yields "".
+        Transcription needs that: asked to transcribe silence, Gemini
+        returns a candidate with no parts at all, and treating that as a
+        malformed response would turn "you recorded nothing" into an
+        error dialog.
+        """
+        candidate = body["candidates"][0]
+        parts = candidate.get("content", {}).get("parts")
+        if not parts:
+            if allow_empty:
+                return ""
+            raise KeyError("parts")
+        return parts[0]["text"]
 
     @staticmethod
     def _backoff_delay(attempt: int) -> float:

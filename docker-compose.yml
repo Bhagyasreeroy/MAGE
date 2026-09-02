@@ -68,6 +68,15 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # NEXT_PUBLIC_* is inlined into the client bundle at BUILD time, so it
+        # must arrive as a build arg. Passing it only under `environment:`
+        # below sets it at runtime, which is too late: the bundle is already
+        # written, and the ARG defaults to an empty string. An empty string is
+        # not nullish, so the `?? 'http://localhost:8000'` fallback in the app
+        # does not fire either — every API call then resolves relative to the
+        # frontend's own origin and 404s.
+        NEXT_PUBLIC_API_URL: http://localhost:${BACKEND_PORT:-8000}
     container_name: mage-frontend
     ports:
       - "${FRONTEND_PORT:-3000}:3000"

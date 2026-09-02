@@ -1,8 +1,9 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AgentStream } from '../../../components/agent-stream';
+import { MicButton } from '../../../components/mic-button';
 import {
   fetchCurrentUser,
   fetchSampleDatasets,
@@ -11,6 +12,7 @@ import {
   type SampleDataset,
 } from '../../../lib/api';
 import { useAnalysisStream } from '../../../lib/use-analysis-stream';
+import { useVoiceInput } from '../../../lib/use-voice-input';
 
 type ExpertiseLevel = 'beginner' | 'intermediate' | 'expert';
 
@@ -52,6 +54,27 @@ export default function NewAnalysisPage() {
   // starts, `stream.phase` is the source of truth for progress.
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const goalRef = useRef<HTMLTextAreaElement>(null);
+
+  // Voice input appends rather than replaces, so a goal can be part typed and
+  // part spoken, and a second recording extends the first instead of wiping
+  // it. The caret is then parked at the end, ready for editing — the
+  // transcript is a draft to correct, never a committed answer.
+  const appendTranscript = useCallback((text: string) => {
+    setGoal((current) => {
+      const next = current.trim() ? `${current.trim()} ${text}` : text;
+      return next.slice(0, 2000);
+    });
+    requestAnimationFrame(() => {
+      const el = goalRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+  }, []);
+
+  const voice = useVoiceInput({ onTranscript: appendTranscript });
 
   const [sampleDatasets, setSampleDatasets] = useState<SampleDataset[]>([]);
   const [selectedSample, setSelectedSample] = useState<SampleDataset | null>(null);
@@ -151,6 +174,7 @@ export default function NewAnalysisPage() {
           <div className="relative">
             <textarea
               id="goal-input"
+              ref={goalRef}
               rows={4}
               value={goal}
               onChange={(e) => setGoal(e.target.value)}
@@ -164,6 +188,32 @@ export default function NewAnalysisPage() {
               {goal.length}/2000
             </span>
           </div>
+
+          {/* Voice input. The whole row is conditional, not just the button:
+              on a browser that cannot record, this should look exactly like
+              the page always has rather than leaving an empty gap. */}
+          {voice.isSupported && (
+            <div className="flex items-center justify-between gap-4 mt-4">
+              <div className="flex items-center gap-3">
+                <MicButton voice={voice} disabled={isRunning} />
+                {voice.state === 'idle' && !voice.error && (
+                  <span className="text-xs text-navy/40 font-medium">
+                    …or say it out loud
+                  </span>
+                )}
+              </div>
+              {voice.error && (
+                <button
+                  type="button"
+                  onClick={voice.dismissError}
+                  title="Dismiss"
+                  className="text-xs text-red-500 font-medium text-right hover:text-red-600 transition-colors"
+                >
+                  {voice.error}
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Expertise Level */}

@@ -31,6 +31,10 @@ grounded in a retrievable methodology source, not just an LLM's opinion.
   ("find outliers in revenue", "what drives churn?", "summarize this
   dataset") and a planner builds a conditional sequence of agent steps
   instead of always running the same fixed pipeline.
+- **Voice input** — state your goal out loud instead of typing it. The
+  recording is re-encoded to 16 kHz mono WAV in the browser and transcribed
+  by Gemini; the transcript lands in the goal box for you to edit, and is
+  never auto-submitted. Available on the goal box and the follow-up chat.
 - **Real ingestion** — CSV, JSON, Parquet, Excel, TSV, with schema
   inference, delimiter detection, and data-quality profiling
   (completeness, uniqueness, missingness) on load.

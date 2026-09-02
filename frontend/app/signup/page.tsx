@@ -5,7 +5,8 @@ import { useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { registerUser, loginUser } from '../lib/api';
 
-const GOOGLE_LOGIN_URL = `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'}/auth/google/login`;
+// `||`, not `??` — an unset build ARG inlines as "", which `??` would keep.
+const GOOGLE_LOGIN_URL = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/google/login`;
 
 const LogoIcon = () => (
   <svg className="w-10 h-10 text-cream" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -10,7 +10,10 @@
  *  • Automatic token refresh on 401 responses
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// `||`, not `??`: an unset Docker build ARG inlines as an empty string, which
+// is not nullish, so `??` would keep it and every request would resolve
+// relative to the frontend's own origin.
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 /**
  * Extract a human-readable message from a FastAPI error response body.
@@ -465,6 +468,29 @@ export async function ingestDataset(file: File): Promise<IngestionResult> {
   const formData = new FormData();
   formData.append('file', file);
   return authFetchFormData<IngestionResult>('/analysis/ingest', formData);
+}
+
+export interface TranscriptionResult {
+  transcript: string;
+}
+
+/**
+ * Send a recording to the backend and get its text back.
+ *
+ * The blob must already be in a format Gemini reads natively — the recorder
+ * hook re-encodes to WAV before calling this, because Chrome's MediaRecorder
+ * emits webm, which Gemini does not officially accept. Nothing is persisted
+ * server-side; the transcript is the only thing that survives the call.
+ *
+ * An empty `transcript` is a success, not a failure: it means the recording
+ * held no intelligible speech.
+ */
+export async function transcribeAudio(audio: Blob): Promise<TranscriptionResult> {
+  const formData = new FormData();
+  // The filename is required by the multipart spec and otherwise unused; the
+  // backend reads the format from the blob's MIME type, not the extension.
+  formData.append('audio', audio, 'recording.wav');
+  return authFetchFormData<TranscriptionResult>('/analysis/transcribe', formData);
 }
 
 /**

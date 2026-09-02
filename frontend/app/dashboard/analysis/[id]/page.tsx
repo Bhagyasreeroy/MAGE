@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   authFetchFormData,
@@ -30,7 +30,9 @@ import {
   ScatterPlot,
   Violin,
 } from '../../../components/charts';
+import { MicButton } from '../../../components/mic-button';
 import { Markdown } from '../../../components/markdown';
+import { useVoiceInput } from '../../../lib/use-voice-input';
 
 interface StepResult {
   // Mirrors the backend ReActStep schema (backend/schemas/analysis.py).
@@ -531,6 +533,21 @@ export default function AnalysisResultPage() {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [chatMode, setChatMode] = useState<'rag' | 'llm'>('rag');
+
+  const chatInputRef = useRef<HTMLInputElement>(null);
+  // Same append-and-review contract as the goal box: a spoken follow-up lands
+  // in the field for the user to fix before sending, never auto-submitted.
+  // A misheard word here costs a full pipeline re-run.
+  const appendToChat = useCallback((text: string) => {
+    setChatInput((current) => (current.trim() ? `${current.trim()} ${text}` : text));
+    requestAnimationFrame(() => {
+      const el = chatInputRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+  }, []);
+  const voice = useVoiceInput({ onTranscript: appendToChat });
   const [exportingKey, setExportingKey] = useState<'pdf' | 'json' | 'citations' | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [shareStatus, setShareStatus] = useState<{ is_shared: boolean; share_id: string } | null>(null);
@@ -1213,11 +1230,22 @@ export default function AnalysisResultPage() {
           <form onSubmit={handleSendMessage} className="relative group">
             <input
               type="text"
+              ref={chatInputRef}
               value={chatInput}
               onChange={(e) => setChatInput(e.target.value)}
-              placeholder="Ask a follow-up question…"
+              placeholder={voice.state === 'recording' ? 'Listening…' : 'Ask a follow-up question…'}
               disabled={isSending}
-              className="w-full bg-warm-white/90 backdrop-blur-md border border-dusty-rose/30 rounded-full pl-6 pr-16 py-5 text-navy placeholder:text-navy/40 shadow-xl shadow-navy/5 focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all disabled:opacity-60"
+              // Left padding widens only when the mic is actually there, so an
+              // unsupported browser keeps the original spacing.
+              className={`w-full bg-warm-white/90 backdrop-blur-md border border-dusty-rose/30 rounded-full ${
+                voice.isSupported ? 'pl-16' : 'pl-6'
+              } pr-16 py-5 text-navy placeholder:text-navy/40 shadow-xl shadow-navy/5 focus:outline-none focus:ring-2 focus:ring-lavender focus:border-lavender transition-all disabled:opacity-60`}
+            />
+            <MicButton
+              voice={voice}
+              disabled={isSending}
+              compact
+              className="absolute left-3 top-1/2 -translate-y-1/2"
             />
             <button
               type="submit"
@@ -1227,9 +1255,20 @@ export default function AnalysisResultPage() {
               <SendIcon />
             </button>
           </form>
-          <p className="text-center text-[10px] text-navy/40 font-medium uppercase tracking-widest mt-4">
-            MAGE can process new queries and control agents dynamically
-          </p>
+          {voice.error ? (
+            <button
+              type="button"
+              onClick={voice.dismissError}
+              title="Dismiss"
+              className="block w-full text-center text-[11px] text-red-500 font-medium mt-4 hover:text-red-600 transition-colors"
+            >
+              {voice.error}
+            </button>
+          ) : (
+            <p className="text-center text-[10px] text-navy/40 font-medium uppercase tracking-widest mt-4">
+              MAGE can process new queries and control agents dynamically
+            </p>
+          )}
         </div>
       </div>
     </div>
