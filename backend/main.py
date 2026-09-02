@@ -22,7 +22,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from backend.core.config import settings
 from backend.core.database import init_db
-from backend.routers import health, analysis, auth, oauth
+from backend.routers import analysis, auth, health, oauth, ocr
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +114,7 @@ app.include_router(health.router, tags=["Health"])
 app.include_router(analysis.router, prefix="/analysis", tags=["Analysis"])
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(oauth.router, prefix="/auth", tags=["Authentication"])
+app.include_router(ocr.router, prefix="/api/v1", tags=["OCR"])
 
 
 if __name__ == "__main__":
