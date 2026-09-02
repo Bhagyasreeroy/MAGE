@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     anthropic_api_key: str = ""
     gemini_api_key: str = ""
+    ocr_space_api_key: str = "helloworld"
+    ocr_space_api_url: str = "https://api.ocr.space/parse/image"
 
     # ── Vector Store ───────────────────────────────────────────────────────
     vector_store_backend: str = "chroma"  # "chroma" | "faiss"
