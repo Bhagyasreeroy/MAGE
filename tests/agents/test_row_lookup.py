@@ -227,3 +227,55 @@ class TestSummaryStatsUseTheSameFormatter:
         round this away to 0.00."""
         answer = qa.try_answer("what is the min of streams", mining, {"row_count": 35})
         assert "0.00012" in answer.text
+
+
+class TestNumericIdentifiers:
+    """Reported from the running app: "tell me about order 1001" on the sample
+    orders dataset was refused with "this chat can't look up individual
+    records". Every identifier there is an integer `order_id`, and numeric
+    columns were excluded from identifier detection wholesale — on the
+    reasoning that "a unique integer id is not what anyone types". For an
+    orders, invoice or ticket table that is exactly what people type.
+    """
+
+    @pytest.fixture
+    def orders(self) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "order_id": [1001, 1002, 1003, 1004],
+                "region": ["South", "East", "East", "West"],
+                "product": ["Doohickey", "Gizmo", "Widget", "Gizmo"],
+                "customer_age": [37, 47, 29, 47],
+                "unit_price": [12.84, 38.83, 9.50, 38.83],
+                "revenue": [20.04, 233.41, 19.00, 233.41],
+            }
+        )
+
+    @pytest.mark.parametrize(
+        "question",
+        ["tell me about order 1001", "what is order 1001", "order_id 1001", "1001"],
+    )
+    def test_an_integer_id_names_a_row(self, qa, orders, question) -> None:
+        answer = qa.try_answer(question, {}, {}, dataframe=orders)
+        assert answer is not None
+        assert "1001" in answer.text
+        assert "Doohickey" in answer.text
+
+    def test_a_measurement_that_happens_to_be_unique_is_not_an_id(self, qa, orders) -> None:
+        """`revenue` holds unique-ish floats, but a revenue figure names a
+        measurement, not a record — and matching one would answer a question
+        nobody asked."""
+        assert qa.try_answer("tell me about 20.04", {}, {}, dataframe=orders) is None
+
+    def test_a_repeated_numeric_column_is_still_a_group(self, qa, orders) -> None:
+        """47 is two different customers' age. A group is the Query tab's job."""
+        assert qa.try_answer("tell me about 47", {}, {}, dataframe=orders) is None
+
+    def test_text_identifiers_still_win_over_numeric_ones(self, qa) -> None:
+        """A named record is the more likely subject when both could match."""
+        df = pd.DataFrame(
+            {"ticket_id": [4101, 4102], "reporter": ["Ana Ruiz", "Bo Chen"], "status": ["open", "closed"]}
+        )
+        answer = qa.try_answer("tell me about Ana Ruiz", {}, {}, dataframe=df)
+        assert "Ana Ruiz" in answer.text
+        assert "open" in answer.text

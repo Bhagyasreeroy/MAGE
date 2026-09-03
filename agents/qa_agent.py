@@ -57,6 +57,12 @@ MAX_ROW_FIELDS = 20
 
 _NON_ALPHANUMERIC_RE = re.compile(r"[^a-z0-9]+")
 
+# A numeric column is only an identifier if its *name* says so. Uniqueness
+# alone is not enough: a revenue or timestamp column is often unique per row
+# and a figure from one names a measurement, not a record. Requiring the name
+# is what keeps "tell me about 20.04" from returning somebody's order.
+_IDENTIFIER_NAME_RE = re.compile(r"(?:^|[^a-z])(id|ids|no|num|number|code|key|ref|sku)(?:[^a-z]|$)")
+
 
 @dataclass
 class QAAnswer:
@@ -92,14 +98,29 @@ def _identifier_columns(df: pd.DataFrame) -> list[str]:
     identifiers: list[str] = []
     for column in df.columns:
         series = df[column]
-        # Numbers and dates are excluded deliberately. A unique integer id is
-        # not what anyone types when they ask about a record, and a bare year
-        # in a question would match a date column constantly.
-        if pd.api.types.is_numeric_dtype(series) or pd.api.types.is_datetime64_any_dtype(series):
+        # Dates are excluded outright: a bare year in a question would match a
+        # date column constantly.
+        if pd.api.types.is_datetime64_any_dtype(series):
             continue
+        # Most numerics are measurements, but an orders, invoice or ticket
+        # table identifies its records by an integer, and "tell me about order
+        # 1001" is exactly how people ask about one. Admitted only when the
+        # column is whole-numbered *and* named like an identifier — floats are
+        # measurements whatever they are called, and an unnamed integer column
+        # is a count or a code we have no reason to read as a name.
+        if pd.api.types.is_numeric_dtype(series):
+            if pd.api.types.is_bool_dtype(series):
+                continue
+            if not pd.api.types.is_integer_dtype(series):
+                continue
+            if not _IDENTIFIER_NAME_RE.search(str(column).lower()):
+                continue
         distinct = int(series.nunique(dropna=True))
         if distinct > 1 and distinct / row_count >= IDENTIFIER_UNIQUENESS:
             identifiers.append(column)
+    # Text first, so a named record wins when a question could match both — a
+    # person's name is a likelier subject than a number sharing the question.
+    identifiers.sort(key=lambda c: pd.api.types.is_numeric_dtype(df[c]))
     return identifiers
 
 
