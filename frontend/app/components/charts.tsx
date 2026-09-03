@@ -170,12 +170,20 @@ export function CorrelationHeatmap({
   matrix: (number | null)[][];
   size?: ChartSize;
 }) {
+  // Tints run 0.08 -> 0.50 alpha, never to full strength, so every cell stays
+  // light enough for one constant dark ink. The obvious alternative — alpha
+  // straight to 1.0 with white text — makes a near-zero correlation white on
+  // near-white and its number vanishes, which is exactly what a reader most
+  // needs to see spelled out. Capping the ramp costs a little punch on the
+  // 1.00 diagonal and buys 4.8:1 contrast on the worst cell in the matrix.
+  const CELL_ALPHA_FLOOR = 0.08;
+  const CELL_ALPHA_RANGE = 0.42;
   const cellColor = (v: number | null) => {
-    if (v == null) return '#e5e5e5';
-    const intensity = Math.min(1, Math.abs(v));
+    if (v == null) return 'var(--color-cream-dark)';
+    const alpha = CELL_ALPHA_FLOOR + CELL_ALPHA_RANGE * Math.min(1, Math.abs(v));
     return v >= 0
-      ? `rgba(34, 34, 59, ${intensity})` // navy
-      : `rgba(199, 62, 29, ${intensity})`; // dusty-rose-ish
+      ? `rgba(26, 23, 66, ${alpha})` // navy — positive
+      : `rgba(199, 62, 29, ${alpha})`; // rust — negative
   };
   const cellCls = sizeClass('w-12 h-12', 'w-16 h-16 text-sm', size);
 
@@ -199,7 +207,7 @@ export function CorrelationHeatmap({
               {matrix[i].map((v, j) => (
                 <td
                   key={j}
-                  className={`text-center text-white font-mono ${cellCls}`}
+                  className={`text-center font-mono ${v == null ? 'text-navy/70' : 'text-navy'} ${cellCls}`}
                   style={{ backgroundColor: cellColor(v) }}
                   title={`${row} × ${columns[j]}: ${v?.toFixed(2) ?? 'n/a'}`}
                 >
