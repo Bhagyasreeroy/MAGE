@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -34,6 +35,86 @@ class OCRServiceError(Exception):
 OCR_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 OCR_MAX_ATTEMPTS = 3
 OCR_RETRY_BACKOFF_SECONDS = 1.5
+
+
+def _default_ca_bundle() -> str:
+    """The CA bundle to verify OCR.space against, or "" for certifi's default.
+
+    httpx does not consult the OS trust store, so on a network that re-signs
+    TLS (a corporate proxy, a VPN) every call dies with "self-signed
+    certificate in certificate chain" even though a browser on the same
+    machine is fine. OCR_CA_BUNDLE names the proxy root CA; the two standard
+    env vars are honoured too so a machine already configured for requests or
+    the OpenSSL tools needs no extra setup. A path that does not exist is
+    ignored rather than raising, since a stale value should not take OCR down.
+    """
+    for candidate in (
+        settings.ocr_ca_bundle,
+        os.environ.get("REQUESTS_CA_BUNDLE", ""),
+        os.environ.get("SSL_CERT_FILE", ""),
+    ):
+        if candidate and os.path.exists(candidate):
+            return candidate
+        if candidate:
+            logger.warning("Ignoring CA bundle %r: no such file.", candidate)
+    return ""
+
+
+def _connection_detail(exc: httpx.RequestError) -> str:
+    """Explain a failed connection, naming the fix for the TLS-proxy case."""
+    message = str(exc)
+    if "CERTIFICATE_VERIFY_FAILED" in message or isinstance(exc, httpx.ConnectError) and "certificate" in message:
+        return (
+            "Could not verify the OCR service's TLS certificate. This usually means a "
+            "corporate proxy or VPN is re-signing HTTPS traffic. Export its root "
+            "certificate as a PEM file and set OCR_CA_BUNDLE to that path (or "
+            f"REQUESTS_CA_BUNDLE), then restart the backend. Details: {message}"
+        )
+    return f"Network error connecting to OCR API: {message}"
+
+
+
+def _dedupe_header(cells: list[str]) -> list[str]:
+    """Make a header row usable as CSV column names: non-empty and unique."""
+    header: list[str] = []
+    seen: dict[str, int] = {}
+    for idx, cell in enumerate(cells, start=1):
+        name = cell.strip() or f"column_{idx}"
+        count = seen.get(name, 0)
+        seen[name] = count + 1
+        header.append(name if count == 0 else f"{name}_{count + 1}")
+    return header
+
+
+def normalize_table_rows(rows: list[list[str]]) -> list[list[str]]:
+    """Square up OCR output so pandas reads it as a real table.
+
+    OCR of a document returns everything on the page, not just the grid: a
+    title, a caption, a page number all arrive as one-cell rows alongside the
+    table proper. Written out as-is, the *title* becomes the CSV header, so the
+    dataset lands with a single column named after the document and every real
+    column is lost — which is why such an analysis shows no column stats and no
+    charts worth drawing.
+
+    So the header is the first row as wide as the table's most common width,
+    anything above it is dropped as preamble, and later short rows (a totals
+    line, a footnote) are padded to that width instead of breaking the parse.
+    """
+    widths: dict[int, int] = {}
+    for row in rows:
+        if len(row) > 1:
+            widths[len(row)] = widths.get(len(row), 0) + 1
+    if not widths:
+        return [_dedupe_header(row) if i == 0 else row for i, row in enumerate(rows)] if rows else []
+
+    # Most frequent width wins; the wider one breaks a tie, since a split cell
+    # is a likelier accident than an invented extra column.
+    width = max(widths, key=lambda w: (widths[w], w))
+
+    start = next(i for i, row in enumerate(rows) if len(row) == width)
+    body = rows[start:]
+    squared = [(row + [""] * width)[:width] for row in body]
+    return [_dedupe_header(squared[0])] + squared[1:]
 
 
 def _upstream_detail(exc: httpx.HTTPStatusError) -> str:
@@ -76,10 +157,16 @@ class OCRSpaceService:
         api_key: str | None = None,
         api_url: str | None = None,
         timeout: float = 30.0,
+        ca_bundle: str | None = None,
     ):
         self.api_key = api_key or settings.ocr_space_api_key or "helloworld"
         self.api_url = api_url or settings.ocr_space_api_url or "https://api.ocr.space/parse/image"
         self.timeout = timeout
+        self.ca_bundle = ca_bundle if ca_bundle is not None else _default_ca_bundle()
+
+    def _verify(self) -> Any:
+        """What httpx should verify the OCR.space certificate against."""
+        return self.ca_bundle or True
 
     async def parse_image_bytes(
         self,
@@ -124,7 +211,7 @@ class OCRSpaceService:
             raise OCRServiceError(_upstream_detail(exc)) from exc
         except httpx.RequestError as exc:
             logger.error("OCR.space API connection error: %s", exc)
-            raise OCRServiceError(f"Network error connecting to OCR API: {exc}") from exc
+            raise OCRServiceError(_connection_detail(exc)) from exc
         except Exception as exc:
             logger.error("Unexpected error during OCR request: %s", exc)
             raise OCRServiceError(f"OCR processing failed: {exc}") from exc
@@ -177,7 +264,7 @@ class OCRSpaceService:
         last_exc: httpx.HTTPStatusError | None = None
 
         for attempt in range(1, OCR_MAX_ATTEMPTS + 1):
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, verify=self._verify()) as client:
                 response = await client.post(self.api_url, data=data, files=files)
 
             if response.status_code == 200:
@@ -260,11 +347,11 @@ class OCRSpaceService:
         """
         Convert OCR extracted table rows or lines into CSV string format for dataset ingestion.
         """
-        table_rows = ocr_result.get("table_rows", [])
+        table_rows = normalize_table_rows(ocr_result.get("table_rows", []))
         if not table_rows:
             full_text = ocr_result.get("full_text", "")
             lines = [line.strip() for line in full_text.splitlines() if line.strip()]
-            table_rows = [[line] for line in lines]
+            table_rows = [["text"]] + [[line] for line in lines]
 
         output = io.StringIO()
         import csv

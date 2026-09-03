@@ -167,3 +167,86 @@ class TestOCREndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["status"] == "success"
+
+
+class TestNormalizeTableRows:
+    """OCR returns the whole page; only the grid part should become a dataset."""
+
+    def test_page_title_is_not_used_as_the_header(self):
+        from backend.services.ocr_service import normalize_table_rows
+
+        rows = normalize_table_rows([
+            ["Sample Invoice for OCR Testing"],
+            ["Item Name", "Quantity", "Unit Price", "Total"],
+            ["Cloud Server", "2", "150.00", "300.00"],
+        ])
+
+        assert rows[0] == ["Item Name", "Quantity", "Unit Price", "Total"]
+        assert rows[1:] == [["Cloud Server", "2", "150.00", "300.00"]]
+
+    def test_short_trailing_row_is_padded_not_dropped(self):
+        from backend.services.ocr_service import normalize_table_rows
+
+        rows = normalize_table_rows([
+            ["Item", "Qty", "Total"],
+            ["Cloud Server", "2", "300.00"],
+            ["Total", "395.00"],
+        ])
+
+        assert rows[-1] == ["Total", "395.00", ""]
+
+    def test_duplicate_header_cells_are_made_unique(self):
+        from backend.services.ocr_service import normalize_table_rows
+
+        rows = normalize_table_rows([["Total", "Total", ""], ["1", "2", "3"]])
+
+        assert rows[0] == ["Total", "Total_2", "column_3"]
+
+    def test_text_only_document_keeps_its_lines(self):
+        from backend.services.ocr_service import normalize_table_rows
+
+        assert normalize_table_rows([["a line"], ["another"]]) == [["a line"], ["another"]]
+        assert normalize_table_rows([]) == []
+
+    def test_csv_from_a_titled_invoice_is_rectangular(self):
+        import csv
+        import io
+
+        from backend.services.ocr_service import OCRSpaceService
+
+        csv_text = OCRSpaceService().convert_ocr_to_csv({
+            "table_rows": [
+                ["Sample Invoice for OCR Testing"],
+                ["Item Name", "Quantity", "Total"],
+                ["Cloud Server", "2", "300.00"],
+            ],
+            "full_text": "irrelevant",
+        })
+
+        parsed = list(csv.reader(io.StringIO(csv_text)))
+        assert parsed[0] == ["Item Name", "Quantity", "Total"]
+        assert all(len(row) == 3 for row in parsed)
+
+
+class TestTlsFailureMessage:
+    """A TLS-intercepting proxy is the common cause and has a concrete fix."""
+
+    def test_certificate_failure_names_the_ca_bundle_setting(self):
+        import httpx
+
+        from backend.services.ocr_service import _connection_detail
+
+        exc = httpx.ConnectError(
+            "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: "
+            "self-signed certificate in certificate chain (_ssl.c:1016)"
+        )
+
+        detail = _connection_detail(exc)
+        assert "OCR_CA_BUNDLE" in detail
+
+    def test_other_network_errors_are_reported_plainly(self):
+        import httpx
+
+        from backend.services.ocr_service import _connection_detail
+
+        assert "OCR_CA_BUNDLE" not in _connection_detail(httpx.ConnectTimeout("timed out"))

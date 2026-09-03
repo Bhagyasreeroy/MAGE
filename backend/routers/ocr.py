@@ -29,7 +29,7 @@ from backend.schemas.ocr import (
     OCRUrlRequest,
 )
 from backend.services.dataset_service import save_dataset
-from backend.services.ocr_service import OCRServiceError, ocr_service
+from backend.services.ocr_service import OCRServiceError, normalize_table_rows, ocr_service
 
 logger = logging.getLogger(__name__)
 
@@ -258,10 +258,17 @@ async def convert_to_dataset(
     base_name = file.filename.rsplit(".", 1)[0]
     csv_filename = f"{base_name}_ocr.csv"
 
-    # Calculate row count & column count from table_rows
-    table_rows = result.get("table_rows", [])
-    row_count = len(table_rows) if table_rows else len(result.get("full_text", "").splitlines())
-    col_count = max([len(r) for r in table_rows]) if table_rows else 1
+    # Count what the CSV actually contains, not what OCR returned: the saved
+    # table drops the page's preamble rows and its first row is the header, so
+    # the raw counts would overstate both and disagree with the dataset the
+    # user then opens.
+    table_rows = normalize_table_rows(result.get("table_rows", []))
+    if table_rows:
+        row_count = len(table_rows) - 1
+        col_count = len(table_rows[0])
+    else:
+        row_count = len([l for l in result.get("full_text", "").splitlines() if l.strip()])
+        col_count = 1
 
     dataset = await save_dataset(
         db=db,

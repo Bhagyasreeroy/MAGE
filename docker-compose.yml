@@ -40,6 +40,7 @@ services:
       # globally — so OCR works from the host and mysteriously rate-limits
       # inside the container.
       - OCR_SPACE_API_KEY=${OCR_SPACE_API_KEY:-}
+      - OCR_CA_BUNDLE=${OCR_CA_BUNDLE:-}
       - OCR_SPACE_API_URL=${OCR_SPACE_API_URL:-https://api.ocr.space/parse/image}
       - VECTOR_STORE_BACKEND=${VECTOR_STORE_BACKEND:-chroma}
       - FAISS_INDEX_PATH=/app/data/faiss_index

@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     ocr_space_api_key: str = "helloworld"
     ocr_space_api_url: str = "https://api.ocr.space/parse/image"
+    # httpx verifies TLS against certifi's bundle, not the system keychain, so
+    # a network that re-signs traffic (a corporate proxy, Zscaler, a VPN) fails
+    # every OCR call with "self-signed certificate in certificate chain".
+    # Point this at that proxy's root CA (a PEM file) to trust it.
+    ocr_ca_bundle: str = ""
 
     # ── Vector Store ───────────────────────────────────────────────────────
     vector_store_backend: str = "chroma"  # "chroma" | "faiss"
